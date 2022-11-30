@@ -12,6 +12,9 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+
+logging.getLogger('matplotlib.font_manager').disabled = True
+
 from torchvision.transforms import ToTensor, Compose, Resize, Normalize, ConvertImageDtype, ToPILImage
 from torch.utils.data import DataLoader, Dataset
 
@@ -20,9 +23,9 @@ import config
 
 """
 TODO:
-- meaning of x and y
-- extract other info from the filename
-- extract info from dirname above filename
+- meaning of x and y --> person_ID0, label_bin #DONE#
+- extract other info from the filename  #DONE#
+- extract info from dirname above filename  #DONE#
 
 """
 
@@ -40,6 +43,9 @@ labels = {
     'Mu': 'Mask upper',
     'Ml': 'Mask lower'
 }
+
+label_nums = dict(zip(labels.keys(), range(len(labels))))
+
 speaking = {
     'T': 'true',  # talking
     'NT': 'false'  # not talking
@@ -61,11 +67,13 @@ glasses = {
 
 
 data_root_dir = join(os.pardir, 'data', 'client')
-adaption_txt = 'adaptation_list.txt'
-test_txt = 'test_list.txt'
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')
+adaptation_txt = 'adaptation_list.txt'
+test_txt = 'test_list.txt'
+annotations_train_path = join(data_root_dir, adaptation_txt)
+annotations_test_path = join(data_root_dir, test_txt)
 
 # set loglevel debug
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(message)s')
@@ -76,20 +84,29 @@ def read_annotations(path, samples_dir):
         contents_list = f.readlines()
     contents_list = [x.strip().split(' ') for x in contents_list]
     samples = []
-    count_missing = 0
+    count_failed = 0
     for s in contents_list:
         try:
             path = join(samples_dir, s[0] + '.jpg')
+
             # skip non-existing samples
             if os.path.isfile(path):
-                samples.append({'path': path, 'x': int(s[1]), 'y': int(s[2])})
+                label_dir, code = s[0].split('/')[1:3]
+                info = info_from_filename(code)
+                label = info['label']
+                samples.append({'path': path,
+                                'id0': int(s[1]),
+                                'label_bin': int(s[2]),
+                                'label_dir': label_dir,
+                                'label_num': label_nums[label],
+                                **info})
             else:
-                count_missing += 1
+                count_failed += 1
         except:
-            pass
+            count_failed += 1
 
-    if count_missing > 0:
-        logging.warning(f"Missing samples: {count_missing} in {samples_dir}")
+    if count_failed > 0:
+        logging.warning(f"Missing/failed samples: {count_failed} in {samples_dir}")
 
     samples = pd.DataFrame(samples)
     return samples
@@ -109,10 +126,11 @@ class RoseYoutuDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return image, sample['x'], sample['y']
+        # todo: return path as well
+        return image, sample['label_num']
 
 
-def RoseYoutuLoader(which='train', batch_size=None, num_workers=None):
+def RoseYoutuLoader(which='train', batch_size=None, num_workers=None, **kwargs):
     """
     Returns a dataloader for the Rose Youtu dataset
     :param which:
@@ -129,25 +147,31 @@ def RoseYoutuLoader(which='train', batch_size=None, num_workers=None):
 
     """
 
-    kwargs = {
+    kwargs_dataset = {
         'num_workers': (num_workers if num_workers else 1),
         'batch_size': (batch_size if batch_size else 1),
         'pin_memory': True,
         'drop_last': True
     }
 
-    if which == 'train':
-        annotations = read_annotations(join(data_root_dir, adaption_txt), samples_train_dir)
-        kwargs.update({'shuffle': True})
-    elif which == 'val':
-        pass
-    elif which == 'test':
-        annotations = read_annotations(join(data_root_dir, test_txt), samples_test_dir)
-        kwargs.update({'shuffle': False})
-        pass
-    else:
-        raise ValueError(f"Unknown which: {which}")
+    if type(which) == pd.DataFrame:
+        annotations = which
 
+    elif which == 'train':
+        annotations = read_annotations(annotations_train_path, samples_train_dir)
+        kwargs_dataset.update({'shuffle': True})
+
+    elif which == 'val':
+        raise NotImplementedError('val split not available automatically')
+
+    elif which == 'test':
+        annotations = read_annotations(annotations_test_path, samples_test_dir)
+        kwargs_dataset.update({'shuffle': False})
+
+    else:
+        raise ValueError(f"Invalid split: {which}")
+
+    kwargs_dataset.update(kwargs)
 
     transform = Compose([
         # Resize((224, 224)),
@@ -157,7 +181,7 @@ def RoseYoutuLoader(which='train', batch_size=None, num_workers=None):
     ])
 
     dataset = RoseYoutuDataset(annotations, transform=transform)
-    loader = DataLoader(dataset, **kwargs)
+    loader = DataLoader(dataset, **kwargs_dataset)
 
     return loader
 
@@ -184,16 +208,17 @@ def info_from_filename(filename):
     N: index number
     
     """
-    keys = ['label', 'speaking', 'device', 'glasses', 'environment', 'id', 'idx']
+    keys = ['id1', 'label', 'speaking', 'device', 'glasses', 'environment', 'id2', 'idx']
     values = filename.split('_')
-    # assert len(values) == len(keys)
+    assert len(values) == len(keys), f"Expected {len(keys)} values, got {len(values)}"
+
     return dict(zip(keys, values))
 
 
 # def main():
 if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
-    paths_training = read_annotations(join(data_root_dir, adaption_txt), samples_train_dir)
+    paths_training = read_annotations(join(data_root_dir, adaptation_txt), samples_train_dir)
     train_ds = RoseYoutuDataset(paths_training)
 
     # show first image
@@ -208,6 +233,15 @@ if __name__ == '__main__':
     imgs, xs, ys = next(iter(train_loader))
 
     test_loader = RoseYoutuLoader('test')
+
+    paths_test = read_annotations(join(data_root_dir, test_txt), samples_test_dir)
+
+    a = paths_training['idx'].to_numpy()
+    np.unique(a, return_counts=True)
+
+    b = paths_test['idx'].to_numpy()
+    np.unique(b, return_counts=True)
+    # ~500 per idx, 67k in total
 
     """
     paths_test = read_annotations(join(data_root_dir, test_txt), samples_test_dir)
