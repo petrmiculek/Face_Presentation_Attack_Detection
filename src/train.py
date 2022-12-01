@@ -1,6 +1,17 @@
 # stdlib
+import argparse
 import logging
 import os
+import datetime
+from os.path import join
+
+
+"""
+# fix for local import problems - add all local directories
+import sys
+sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
+sys.path.extend(sys_path_extension)
+"""
 
 # external
 import torch
@@ -9,6 +20,7 @@ from torchvision.models import resnet18, ResNet18_Weights
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
+import wandb as wb
 
 from matplotlib import pyplot as plt
 
@@ -17,7 +29,8 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 # local
 import config
 import rose_youtu_dataset as dataset
-from eval import accuracy
+from eval import accuracy, confusion_matrix
+from util import get_dict
 
 output_categories = np.array(['genuine', 'attack'])
 
@@ -35,13 +48,38 @@ other:
 - 
 """
 
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    '--source', help="Path to functions file used for training.", required=False)
+parser.add_argument(
+    '--destination', help="Path to save your trained model.", required=False)
+
+args_global = None
+
 num_classes = len(dataset.labels)
 
 if __name__ == '__main__':
+    args_global = parser.parse_args()
+
+
     print('Training multiclass softmax CNN on RoseYoutu')
+
+    ''' Initialization '''
+    # check available gpus
+    print(f"Available GPUs: {torch.cuda.device_count()}")
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name(0)}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    torch.backends.cudnn.benchmark = True
 
     # set logging level
     logging.basicConfig(level=logging.INFO)
+
+    training_run_id = datetime.datetime.now().strftime("%m-%d-%H-%M-%S")
+    outputs_dir = join('runs', training_run_id)
+    checkpoint_path = join(outputs_dir, f'checkpoint_{training_run_id}.pt')
+
+    epochs_trained = 0
 
     ''' Model '''
     if True:
@@ -59,6 +97,8 @@ if __name__ == '__main__':
             else:
                 param.requires_grad = True
             # print(name, param.requires_grad)
+
+        model.to(device)
 
     ''' Dataset '''
     if True:
@@ -79,6 +119,7 @@ if __name__ == '__main__':
         idx_a_tr, idx_a_val = int(len_a * train_split), int(len_a * (train_split + val_split))
 
         # concatenate genuine and attacks
+        print('Running on limited datset size')
         paths_training = pd.concat([paths_genuine[:idx_g_tr], paths_attacks[:idx_a_tr]])[:100]
         paths_validation = pd.concat([paths_genuine[idx_g_tr:idx_g_val], paths_attacks[idx_a_tr:idx_a_val]])[:20]
         paths_test = pd.concat([paths_genuine[idx_g_val:], paths_attacks[idx_a_val:]])[:20]
@@ -91,7 +132,30 @@ if __name__ == '__main__':
         len_val_ds = len(val_loader.dataset)
         len_test_ds = len(test_loader.dataset)
 
-    ''' Training '''
+    ''' Model Setup '''
+    lr = 1e-3
+    batch_size = 4
+
+    # loss optimizer etc
+    criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999))
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
+
+    ''' Logging '''
+    wb.config = {
+        "run_id": training_run_id,
+        "learning_rate": lr,
+        "batch_size": batch_size,
+        "optimizer": str(optimizer),
+    }
+
+    config_dump = get_dict(config)
+    wb.config.update(config_dump)
+    # global args_global
+    args_dict = get_dict(args_global)
+    wb.config.update(args_dict)
+    # wb.init(project="facepad", config=wb.config)
+
     # sample prediction
     if False:
         img, x, label = next(iter(train_loader))
@@ -117,35 +181,46 @@ if __name__ == '__main__':
             plt.tight_layout()
             plt.show()
 
-    # loss optimizer etc
-    criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.999))
-
+    ''' Training '''
     # run training
-    model.train()
 
     for epoch in range(3):
         print(f'Epoch {epoch}')
+        model.train()
         ep_train_loss = 0
         ep_correct_train = 0
-        for img, label in tqdm(train_loader, total=len(train_loader)):
-            optimizer.zero_grad()
-            img_batch = preprocess(img)
-            out = model(img_batch)
-            loss = criterion(out, label)
-            ep_train_loss += loss.item()
-            loss.backward()
-            optimizer.step()
+        preds_train = []
+        labels_train = []
 
-            # compute accuracy
-            prediction_hard = torch.argmax(out, dim=1)
-            match = prediction_hard == label
-            ep_correct_train += match.sum().item()
+        with tqdm(train_loader, total=len(train_loader), leave=True) as progress_bar:
+            for img, label in progress_bar:
+                # prediction
+                img = img.to(device, non_blocking=True, dtype=torch.float)
+                label = label.to(device, non_blocking=True)  # , dtype=torch.float
+                # torch.LongTensor
+
+                img_batch = preprocess(img)
+                out = model(img_batch)
+                print(out.shape, label.shape)
+                loss = criterion(out, label)
+                ep_train_loss += loss.item()
+
+                # learning step
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                # compute accuracy
+                prediction_hard = torch.argmax(out, dim=1)
+                match = prediction_hard == label
+                ep_correct_train += match.sum().item()
+                progress_bar.set_postfix(loss=f'{ep_train_loss:.4f}')
+
+                # save predictions
+                preds_train.append(prediction_hard.cpu().numpy())
+                labels_train.append(label.cpu().numpy())
 
             # print(out.softmax(dim=1).detach().numpy(), y.detach().numpy(), f'loss: {loss.item():.2f}')
-        print(f'\tTraining loss: {ep_train_loss / len(train_loader):.2f}')
-        print(f'\tTraining accuracy: {ep_correct_train / len_train_ds:.2f}')
-
 
         # validation loop
         model.eval()
@@ -153,6 +228,7 @@ if __name__ == '__main__':
             ep_loss_val = 0
             ep_correct_val = 0
             for img, label in tqdm(val_loader):
+                img, label = img.to(device), label.to(device)
                 img_batch = preprocess(img)
                 out = model(img_batch)
                 loss = criterion(out, label)
@@ -163,18 +239,37 @@ if __name__ == '__main__':
                 match = prediction_hard == label
                 ep_correct_val += match.sum().item()
 
-            print(f'Validation loss: {ep_loss_val / len_val_ds:.2f}')
-            print(f'Validation accuracy: {ep_correct_val / len_val_ds:.2f}')
+        ep_train_loss /= len(train_loader)  # loss is averaged over batch already
+        ep_accu_train = ep_correct_train / len_train_ds
+        ep_loss_val /= len(val_loader)
+        ep_accu_val = ep_correct_val / len_val_ds
 
-        # model checkpointing
+        # log results
+        res = {'Loss Training': ep_train_loss,
+               'Loss Validation': ep_loss_val,
+               'Accuracy Training': ep_accu_train,
+               'Accuracy Validation': ep_accu_val,
+               }
+
+        print('')  # newline
+        for k, v in res.items():
+            print(f'{k}: {v:.4f}')
+
+        # wb.log(res, step=epoch)
+
+    # model checkpointing
+
 
 
     # test eval
     model.eval()
+    preds_test = []
+    labels_test = []
     with torch.no_grad():
         total_loss_test = 0
         total_correct_test = 0
         for img, label in tqdm(test_loader):
+            img, label = img.to(device), label.to(device)
             img_batch = preprocess(img)
             out = model(img_batch)
             loss = criterion(out, label)
@@ -185,5 +280,27 @@ if __name__ == '__main__':
             match = prediction_hard == label
             total_correct_test += match.sum().item()
 
-        print(f'Test loss: {total_loss_test / len_test_ds:.2f}')
-        print(f'Test accuracy: {total_correct_test / len_test_ds:.2f}')
+            # save predictions
+            preds_test.append(prediction_hard.cpu().numpy())
+            labels_test.append(label.cpu().numpy())
+
+        loss_test = total_loss_test / len(test_loader)
+        accu_test = total_correct_test / len_test_ds
+        print(f'Test loss: {loss_test:.2f}')
+        print(f'Test accuracy: {accu_test:.2f}')
+
+    # log results
+    res = {
+        'Loss Test': loss_test,
+        'Accuracy Test': accu_test,
+    }
+    wb.log(res, step=epoch)
+
+    # save model
+    torch.save(model.state_dict(), checkpoint_path)
+
+    # plot results
+    preds_test = np.concatenate(preds_test)
+    labels_test = np.concatenate(labels_test)
+    plot_confusion_matrix(labels_test, preds_test, output_categories, normalize=True)
+

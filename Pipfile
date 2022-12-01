@@ -5,6 +5,10 @@ name = "pypi"
 
 [packages]
 pandas = "*"
+wandb = "*"
+prettytable = "*"
+seaborn = "*"
+scikit-learn = "*"
 
 [dev-packages]
 
