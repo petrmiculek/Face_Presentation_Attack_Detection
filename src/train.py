@@ -16,7 +16,7 @@ sys.path.extend(sys_path_extension)
 # external
 import torch
 # from torchvision.models import shufflenet_v2_x1_0
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import ResNet18_Weights
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -40,18 +40,25 @@ import rose_youtu_dataset as dataset
 from eval import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict
 from model_util import EarlyStopping
+import resnet18
 
 """
 todo:
-model:
+prio:
+- 
+
+normal:
 - training: one-category, all-but-one-category
 - log plots to wandb
 - fix W&B 'failed to sample metrcics' error
 
+- extract one-to-last layer embeddings (for t-SNE etc.)
+    - resnet18.py
+
 less important:
-- checkpoint also state of scheduler, optimizer, ...
 - 16bit training
 - setup for metacentrum
+- checkpoint also state of scheduler, optimizer, ...
 
 other:
 - cache function calls (reading annotations)
@@ -63,6 +70,17 @@ done:
 - validation dataset split  #DONE#
 - W&B  #DONE#
 - confusion matrix  #DONE#
+
+notes:
+
+one-category training: 
+    train genuine + one type of attack
+    binary predictions
+    + possibly include out-of-distribution data for testing
+
+all-but-one-category training:
+    train genuine + 6/7 categories
+    test on the last category
 
 """
 ''' Global variables '''
@@ -110,7 +128,8 @@ if __name__ == '__main__':
     ''' Model '''
     if True:
         weights = ResNet18_Weights.IMAGENET1K_V1
-        model = resnet18(weights=weights)
+        model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+
         preprocess = weights.transforms()
 
         # replace last layer with binary classification head
@@ -189,6 +208,7 @@ if __name__ == '__main__':
         "learning_rate": args.lr,
         "batch_size": args.batch_size,
         "optimizer": str(optimizer),
+        "dataset_size": len_train_ds,
     }
 
     config_dump = get_dict(config)
@@ -270,7 +290,6 @@ if __name__ == '__main__':
                     labels_train.append(label.cpu().numpy())
                     preds_train.append(prediction_hard.cpu().numpy())  # todo check detach
 
-                # print(out.softmax(dim=1).detach().numpy(), y.detach().numpy(), f'loss: {loss.item():.2f}')
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')
 
@@ -389,8 +408,7 @@ if __name__ == '__main__':
     labels_test = np.concatenate(labels_test)
     cm = confusion_matrix(labels_test, preds_test, labels=cat_names, normalize=False, title_suffix='Test',
                      output_location=outputs_dir, show=show_plots)
-    # log confusion matrix to wandb
-    wb.log({"confusion_matrix": cm})
+
 
 
 
