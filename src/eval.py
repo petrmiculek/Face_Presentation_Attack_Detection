@@ -1,5 +1,7 @@
+# stdlib
 from os.path import join
 
+# external
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
@@ -8,73 +10,103 @@ from matplotlib import pyplot as plt
 from sklearn.metrics import confusion_matrix as conf_mat, classification_report, roc_curve, RocCurveDisplay, auc
 import seaborn as sns
 
+# local
+# -
 
-def compute_metrics(gts, predictions):
-    # todo choose where to concat list into tensor
-    gts = torch.cat(gts)
-    predictions = torch.cat(predictions)
+def compute_metrics(labels, preds, bona_fide=0):
+    if type(labels) == list:
+        labels = np.concatenate(labels)
+    if type(preds) == list:
+        preds = np.concatenate(preds)
 
-    # todo unified call for evaluation
-    predictions_hard = torch.tensor([1 if x >= 0.5 else 0 for x in predictions])
+    tp = np.sum(np.logical_and(preds != bona_fide, labels != bona_fide))
+    tn = np.sum(np.logical_and(preds == bona_fide, labels == bona_fide))
+    fp = np.sum(np.logical_and(preds != bona_fide, labels == bona_fide))
+    fn = np.sum(np.logical_and(preds == bona_fide, labels != bona_fide))
 
-    # print(classification_report(gts, predictions_hard))
+    ''' Accuracy '''
+    accuracy = (tp + tn) / (tp + tn + fp + fn)
 
-    # unused
-    # confusion_matrix(gts, predictions_hard)
+    ''' Precision '''
+    if tp + fp == 0:
+        precision = 0
+    else:
+        precision = tp / (tp + fp)
 
-    results = {}
-    for metric in [accuracy]:
-        results.update(metric(gts, predictions, predictions_hard))
-    return results
+    ''' Recall '''
+    if tp + fn == 0:
+        recall = 0
+    else:
+        recall = tp / (tp + fn)
 
+    if precision + recall == 0:
+        f1 = 0
+    else:
+        f1 = 2 * (precision * recall) / (precision + recall)
 
-def accuracy(gts, predictions, predictions_hard=None):
-    """
-    Compute metrics from predictions and ground truth
-    :param gts: ground truth
-    :param predictions: predictions
-    :param predictions_hard: prediction decisions
-    """
-    if type(gts) == list:
-        gts = torch.cat(gts).cpu()
-        predictions = torch.cat(predictions).cpu()
+    ''' Attack Presentation Classification Error Rate (APCER) '''
+    # == False Rejection Rate (FRR)
+    if fn + tp == 0:
+        apcer = 0
+    else:
+        apcer = fn / (fn + tp)
 
-    if predictions_hard is None:
-        # predictions_hard = torch.tensor([1 if x >= 0.5 else 0 for x in predictions])
-        predictions_hard = (predictions >= 0.5)
+    ''' Bone-Fide Presentation Classification Error Rate (BPCER) '''
+    # == False Acceptance Rate (FAR)
+    if tn + fp == 0:
+        bpcer = 0  # specificity
+    else:
+        bpcer = fp / (fp + tn)  # false acceptance rate
 
-    correct = predictions_hard == gts
+    ''' Average Classification Error Rate '''
+    acer = (apcer + bpcer) / 2  # average error rate
 
-    accuracy = torch.sum(correct) / len(correct)
-
-    results = {
-        'accuracy': accuracy.item()
+    return {
+        'tp': tp,
+        'tn': tn,
+        'fp': fp,
+        'fn': fn,
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+        'apcer': apcer,
+        'bpcer': bpcer,
+        'acer': acer,
     }
-    return results
 
 
 
-def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, show=True, normalize=True):
+def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, show=True, **kwargs):
     """Create and show/save confusion matrix"""
-    if labels is None:
-        labels = list(map(str, range(np.max(gts) + 1)))
+    # if labels is None:
+    #     # labels = list(map(str, range(np.max(gts) + 1)))
+    #     labels = list(range(np.max(gts) + 1))
+    # Problem with labels: data might not include all values
 
-    model_name = 'LSTM_Base'  # make it a parameter
+    model_name = kwargs.pop('model_name', 'UnnamedModel')
+    normalize = kwargs.pop('normalize', False)
+    title_suffix = kwargs.pop('title_suffix', '')
+
+    title = 'Confusion Matrix' + (' - ' + title_suffix if title_suffix else '')
     epochs_trained = '20'
-    kwargs = {}
+    plot_kwargs = {}
     if normalize:
         # {'true', 'pred', 'all'}, default = None
         normalize = 'true'
-        kwargs['vmin'] = 0.0
-        kwargs['vmax'] = 1.0
-        kwargs['fmt'] = '0.2f'
+        plot_kwargs.update({
+            'vmin': 0.0,
+            'vmax': 1.0,
+            'fmt' : '0.2f',
+        })
     else:
         normalize = None
-        kwargs['fmt'] = 'd'
+        plot_kwargs['fmt'] = 'd'
 
-    cm = conf_mat(list(gts), list(predictions_hard), normalize=normalize)
+    labels_numeric = np.arange(len(labels))
+    cm = conf_mat(list(gts), list(predictions_hard), normalize=normalize, labels=labels_numeric)
 
-    sns.set_context('paper', font_scale=1.8)
+    sns.set_context('paper', font_scale=1.0)
     fig_cm = sns.heatmap(
         cm,
         annot=True,
@@ -83,9 +115,9 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
         # fmt='0.2f',
         # vmin=0.0,
         # vmax=1.0
-        **kwargs
+        **plot_kwargs
     )
-    fig_cm.set_title('Confusion Matrix')
+    fig_cm.set_title(title)
     fig_cm.set_xlabel('Predicted')
     fig_cm.set_ylabel('True')
     fig_cm.axis('on')
@@ -98,11 +130,13 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
         fig_cm.figure.savefig(join(output_location, 'confusion_matrix' + '.pdf'),
                               bbox_inches='tight')
 
-    plt.close(fig_cm.figure)
+    # plt.close(fig_cm.figure)
+
+    return fig_cm
 
 
 '''
-
+# currently unused
 def plot_roc_curve(gts, predictions, show=True, output_location=None):
     sns.set_context('paper', font_scale=1.8)
 

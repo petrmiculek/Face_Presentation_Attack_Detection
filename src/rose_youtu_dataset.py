@@ -33,7 +33,7 @@ TODO:
 Rose Youtu Dataset
 """
 labels = {
-    'G': 'genuine',
+    'G': 'genuine',  # bona-fide, no attack, 0
     'Ps': 'printed still',
     'Pq': 'printed quivering',
     'Vl': 'video lenovo',
@@ -41,7 +41,7 @@ labels = {
     'Mc': 'mask cropped',
     'Mf': 'mask full',
     'Mu': 'Mask upper',
-    'Ml': 'Mask lower'
+    # 'Ml': 'Mask lower'  # never occurs
 }
 
 label_nums = dict(zip(labels.keys(), range(len(labels))))
@@ -79,7 +79,16 @@ annotations_test_path = join(data_root_dir, test_txt)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(message)s')
 
 
-def read_annotations(path, samples_dir):
+
+def _read_annotations(path, samples_dir):
+    """
+    Read annotations for the Rose Youtu dataset
+    internal function, use read_annotations instead
+
+    :param path: annotations file path
+    :param samples_dir: data samples root directory
+    :return: annotations dataframe
+    """
     with open(path, 'r') as f:
         contents_list = f.readlines()
     contents_list = [x.strip().split(' ') for x in contents_list]
@@ -112,6 +121,19 @@ def read_annotations(path, samples_dir):
     return samples
 
 
+def read_annotations(which='genuine'):
+    """
+    Read annotations for the Rose Youtu dataset
+    :param which: dataset part: 'genuine', or 'attack'
+    :return: annotations dataframe
+    """
+    if which == 'genuine':
+        return _read_annotations(annotations_train_path, samples_train_dir)
+    elif which == 'attack':
+        return _read_annotations(annotations_test_path, samples_test_dir)
+    else:
+        raise ValueError(f"Invalid annotations requested: {which}")
+
 class RoseYoutuDataset(Dataset):
     def __init__(self, annotations, transform=None):
         self.transform = transform
@@ -126,17 +148,15 @@ class RoseYoutuDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        # todo: return path as well
         return image, sample['label_num']
 
 
-def RoseYoutuLoader(which='train', batch_size=None, num_workers=None, **kwargs):
+def RoseYoutuLoader(annotations, **kwargs):
     """
     Returns a dataloader for the Rose Youtu dataset
-    :param which:
-    :param batch_size:
-    :param num_workers:
-    :return:
+    :param annotations: DataFrame with list of files
+    :param kwargs: keyword arguments for DataLoader
+    :return: dataloader
 
     possibly add:
     - fraction to limit dataset size
@@ -146,30 +166,17 @@ def RoseYoutuLoader(which='train', batch_size=None, num_workers=None, **kwargs):
     -
 
     """
+    shuffle = kwargs.pop('shuffle', False)
+    batch_size = kwargs.pop('batch_size', 1)
+    num_workers = kwargs.pop('num_workers', 1)
 
     kwargs_dataset = {
-        'num_workers': (num_workers if num_workers else 1),
-        'batch_size': (batch_size if batch_size else 1),
+        'num_workers': num_workers,
+        'batch_size': batch_size,
         'pin_memory': True,
-        'drop_last': True
+        'drop_last': True,
+        'shuffle': shuffle
     }
-
-    if type(which) == pd.DataFrame:
-        annotations = which
-
-    elif which == 'train':
-        annotations = read_annotations(annotations_train_path, samples_train_dir)
-        kwargs_dataset.update({'shuffle': True})
-
-    elif which == 'val':
-        raise NotImplementedError('val split not available automatically')
-
-    elif which == 'test':
-        annotations = read_annotations(annotations_test_path, samples_test_dir)
-        kwargs_dataset.update({'shuffle': False})
-
-    else:
-        raise ValueError(f"Invalid split: {which}")
 
     kwargs_dataset.update(kwargs)
 
@@ -198,13 +205,14 @@ def info_from_filename(filename):
 
     """
     Format:
-    L_S_D_x_E_p_N
+    ID_L_S_D_x_E_p_N
+    ID: person ID (1-10)
     L: label
     S: speaking
     D: device
     x: eyeglasses
     E: background environment (unused)
-    p: person ID
+    p: person ID2 (matches the 1-25 numbering in the larger version of this dataset)
     N: index number
     
     """
@@ -215,44 +223,24 @@ def info_from_filename(filename):
     return dict(zip(keys, values))
 
 
-# def main():
-if __name__ == '__main__':
+# if __name__ == '__main__':
+def main():
     ''' Bare Dataset without Loader'''
-    paths_training = read_annotations(join(data_root_dir, adaptation_txt), samples_train_dir)
-    train_ds = RoseYoutuDataset(paths_training)
+    paths_genuine = read_annotations('genuine')
+    genuine_ds = RoseYoutuDataset(paths_genuine)
 
     # show first image
-    img, x, y = train_ds[0]
+    img, label = genuine_ds[0]
     plt.imshow(img)
-    plt.title(f'Training image no. 0, x: {x}, y: {y}')
+    plt.title(f'Training image no. 0, label: {label}')
     plt.show()
 
     ''' Get Dataset Loaders '''
-    train_loader = RoseYoutuLoader('train', batch_size=4)
+    genuine_loader = RoseYoutuLoader(paths_genuine, batch_size=4)
+    attack_loader = RoseYoutuLoader(read_annotations('attack'), batch_size=4)
 
-    imgs, xs, ys = next(iter(train_loader))
+    imgs, ys = next(iter(genuine_loader))
 
-    test_loader = RoseYoutuLoader('test')
-
-    paths_test = read_annotations(join(data_root_dir, test_txt), samples_test_dir)
-
-    a = paths_training['idx'].to_numpy()
-    np.unique(a, return_counts=True)
-
-    b = paths_test['idx'].to_numpy()
-    np.unique(b, return_counts=True)
-    # ~500 per idx, 67k in total
-
-    """
-    paths_test = read_annotations(join(data_root_dir, test_txt), samples_test_dir)
-    # unused
-    test_ds = RoseYoutuDataset(paths_test)
-
-    # show first image
-    img, x, y = test_ds[0]
-    plt.imshow(img)
-    plt.show()
-    """
 
 # if __name__ == '__main__':
 #     main()

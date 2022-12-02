@@ -48,3 +48,15 @@ def get_dict(obj):
     return {key: value for key, value
             in obj.__dict__.items()
             if not key.startswith('_')}
+
+
+def print_dict(dict_results):
+    print('')  # newline
+    for k, v in dict_results.items():
+        print(f'\t{k:20s}:', end='')
+        if isinstance(v, float):
+            print(f' {v:06.4f}')
+        elif isinstance(v, dict):
+            print_dict(v)
+        else:
+            print(f' {v}')
