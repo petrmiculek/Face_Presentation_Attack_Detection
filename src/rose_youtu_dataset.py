@@ -45,6 +45,7 @@ labels = {
 }
 
 label_nums = dict(zip(labels.keys(), range(len(labels))))
+label_names = list(labels.values())
 
 speaking = {
     'T': 'true',  # talking
@@ -75,10 +76,6 @@ test_txt = 'test_list.txt'
 annotations_train_path = join(data_root_dir, adaptation_txt)
 annotations_test_path = join(data_root_dir, test_txt)
 
-# set loglevel debug
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(message)s')
-
-
 
 def _read_annotations(path, samples_dir):
     """
@@ -102,12 +99,12 @@ def _read_annotations(path, samples_dir):
             if os.path.isfile(path):
                 label_dir, code = s[0].split('/')[1:3]
                 info = info_from_filename(code)
-                label = info['label']
+                label_text = info['label_text']
                 samples.append({'path': path,
                                 'id0': int(s[1]),
                                 'label_bin': int(s[2]),
                                 'label_dir': label_dir,
-                                'label_num': label_nums[label],
+                                'label_num': label_nums[label_text],
                                 **info})
             else:
                 count_failed += 1
@@ -121,18 +118,24 @@ def _read_annotations(path, samples_dir):
     return samples
 
 
-def read_annotations(which='genuine'):
+def read_annotations(which='genuine', use_as_label=None):
     """
     Read annotations for the Rose Youtu dataset
     :param which: dataset part: 'genuine', or 'attack'
+    :param use_as_label: copy a column to the label column, convenience thing
     :return: annotations dataframe
     """
     if which == 'genuine':
-        return _read_annotations(annotations_train_path, samples_train_dir)
+        annotations = _read_annotations(annotations_train_path, samples_train_dir)
     elif which == 'attack':
-        return _read_annotations(annotations_test_path, samples_test_dir)
+        annotations = _read_annotations(annotations_test_path, samples_test_dir)
     else:
         raise ValueError(f"Invalid annotations requested: {which}")
+
+    if use_as_label:
+        annotations['label'] = annotations[use_as_label]
+
+    return annotations
 
 class RoseYoutuDataset(Dataset):
     def __init__(self, annotations, transform=None):
@@ -148,7 +151,7 @@ class RoseYoutuDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return image, sample['label_num']
+        return image, sample['label']
 
 
 def RoseYoutuLoader(annotations, **kwargs):
@@ -216,17 +219,17 @@ def info_from_filename(filename):
     N: index number
     
     """
-    keys = ['id1', 'label', 'speaking', 'device', 'glasses', 'environment', 'id2', 'idx']
+    keys = ['id1', 'label_text', 'speaking', 'device', 'glasses', 'environment', 'id2', 'idx']
     values = filename.split('_')
     assert len(values) == len(keys), f"Expected {len(keys)} values, got {len(values)}"
 
     return dict(zip(keys, values))
 
 
-# if __name__ == '__main__':
-def main():
+# def main():
+if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
-    paths_genuine = read_annotations('genuine')
+    paths_genuine = read_annotations('genuine', 'label_num')
     genuine_ds = RoseYoutuDataset(paths_genuine)
 
     # show first image
@@ -237,10 +240,8 @@ def main():
 
     ''' Get Dataset Loaders '''
     genuine_loader = RoseYoutuLoader(paths_genuine, batch_size=4)
-    attack_loader = RoseYoutuLoader(read_annotations('attack'), batch_size=4)
+    paths_attacks = read_annotations('attack', 'label_num')
+    attack_loader = RoseYoutuLoader(paths_attacks, batch_size=4)
 
     imgs, ys = next(iter(genuine_loader))
-
-
-# if __name__ == '__main__':
-#     main()
+    print(imgs.shape, ys.shape)

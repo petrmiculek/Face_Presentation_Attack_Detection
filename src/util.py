@@ -60,3 +60,9 @@ def print_dict(dict_results):
             print_dict(v)
         else:
             print(f' {v}')
+
+def xor(a, b):
+    return (a and not b) or (not a and b)
+
+def keys_append(dict, append):
+    return {k + append: v for k, v in dict.items()}

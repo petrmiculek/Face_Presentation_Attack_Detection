@@ -20,6 +20,7 @@ from torchvision.models import ResNet18_Weights
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
+
 os.environ["WANDB_SILENT"] = "true"
 
 import wandb as wb
@@ -33,12 +34,11 @@ logging.getLogger('matplotlib').setLevel(logging.CRITICAL)
 pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
-
 # local
 import config
 import rose_youtu_dataset as dataset
 from eval import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict
+from util import get_dict, print_dict, xor, keys_append
 from model_util import EarlyStopping
 import resnet18
 
@@ -48,9 +48,12 @@ prio:
 - 
 
 normal:
-- training: one-category, all-but-one-category
+- training: one_attack, unseen_attack
+    - log class chosen for training/val/test
+    - include class names in the confusion matrix title
+
 - log plots to wandb
-- fix W&B 'failed to sample metrcics' error
+- fix W&B 'failed to sample metrics' error
 
 - extract one-to-last layer embeddings (for t-SNE etc.)
     - resnet18.py
@@ -73,57 +76,91 @@ done:
 
 notes:
 
-one-category training: 
-    train genuine + one type of attack
-    binary predictions
-    + possibly include out-of-distribution data for testing
+one_attack training: 
+    - train genuine + one type of attack  #DONE#
+    - binary predictions  #DONE#
+    - shuffling the dataset  #DONE#
+    - mixing genuine and attack data  #DONE#
+    - script: run training on every category separately TODO
+    + possibly include out-of-distribution data for testing?
 
-all-but-one-category training:
-    train genuine + 6/7 categories
-    test on the last category
+unseen_attack training:
+    - train genuine + 6/7 categories  #DONE#
+    - test on the last category  #DONE#
+    - script: run for every category as unseen
 
+todo what is a good val x test split for one-attack
 """
 ''' Global variables '''
-cat_names = list(dataset.labels.values())
-num_classes = len(dataset.labels)
+bona_fide = list(dataset.labels.values()).index('genuine')  # == 0
 
+''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
-parser.add_argument('--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
-parser.add_argument('--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
-parser.add_argument('--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
-# parser.add_argument('--model', help='model name', type=str, default='resnet18')
-parser.add_argument('--num_workers', help='number of workers', type=int, default=0)
+parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
+parser.add_argument('-e', '--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
+parser.add_argument('-l', '--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
+# parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
+parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
+parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
+                    default='one_attack')
+# following (2) arguments are for one_attack mode only
+parser.add_argument('-t', '--attack_test', help='attack type to test on (1..7), random by default', type=int, default=-1)
+parser.add_argument('-r', '--attack_train', help='attack type to train on (1..7), random by default', type=int, default=-1)
 
-
+# print('main is not being run')  # uncomment this when using def main...
 # def main():
 if __name__ == '__main__':
-    print('Training multiclass softmax CNN on RoseYoutu')
+
+    ''' Parse arguments '''
     args = parser.parse_args()
 
+    if args.mode == 'one_attack' and xor(args.attack_test == -1, args.attack_train == -1):
+        raise ValueError('one_attack mode requires both or none of --attack_test --attack_train arguments')
+
+    ''' Setup Training Mode '''
+    training_mode = args.mode  # 'one_attack' or 'unseen_attack' or 'all_attacks'
+    separate_person_ids = False  # if True, train on one person, test on another
+
+    print(f'Training multiclass softmax CNN on RoseYoutu')
+    print(f'Training mode: {training_mode}')
+    if training_mode == 'all_attacks':
+        cat_names = dataset.label_names
+        num_classes = len(dataset.labels)
+    elif training_mode == 'one_attack':
+        cat_names = ['genuine', 'attack']
+        num_classes = 2
+    elif training_mode == 'unseen_attack':
+        cat_names = ['genuine', 'attack']
+        num_classes = 2
+    else:
+        raise ValueError(f'Unknown training mode: {training_mode}')
+
+    ''' Setup Run Environment '''
     if "PYCHARM_HOSTED" in os.environ:
         # running in pycharm
         show_plots = True
     else:
         show_plots = False
-        print('Plottting disabled')
-
+        print('Not running in Pycharm, not displaying plots')
 
     ''' Initialization '''
-    # check available gpus
-    print(f"Available GPUs: {torch.cuda.device_count()}")
-    print(f"Current device: {torch.cuda.current_device()}")
-    print(f"Device name: {torch.cuda.get_device_name(0)}")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    torch.backends.cudnn.benchmark = True
+    if True:
+        # check available gpus
+        print(f"Available GPUs: {torch.cuda.device_count()}")
+        print(f"Current device: {torch.cuda.current_device()}")
+        print(f"Device name: {torch.cuda.get_device_name(0)}")
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        print(f'Running on device: {device}')
+        torch.backends.cudnn.benchmark = True
 
-    # Logging Setup
-    logging.basicConfig(level=logging.WARNING)
+        # Logging Setup
+        logging.basicConfig(level=logging.WARNING)
 
-    training_run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    config.training_run_id = training_run_id
-    outputs_dir = join('runs', training_run_id)
-    os.makedirs(outputs_dir, exist_ok=True)
-    checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
+        training_run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        config.training_run_id = training_run_id
+        outputs_dir = join('runs', training_run_id)
+        os.makedirs(outputs_dir, exist_ok=True)
+        checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
 
     ''' Model '''
     if True:
@@ -132,10 +169,11 @@ if __name__ == '__main__':
 
         preprocess = weights.transforms()
 
-        # replace last layer with binary classification head
+        # replace last layer with n-ary classification head
         model.fc = torch.nn.Linear(512, num_classes, bias=True)
 
         # freeze all previous layers
+        print('Note: Currently not freezing any layers')
         for name, param in model.named_parameters():
             if 'fc' not in name:
                 # param.requires_grad = False
@@ -159,38 +197,115 @@ if __name__ == '__main__':
 
     ''' Dataset '''
     if True:
-        bona_fide = list(dataset.labels.values()).index('genuine')  # == 0
-
         # get annotations (paths to samples + labels)
         paths_genuine = dataset.read_annotations('genuine')
         paths_attacks = dataset.read_annotations('attack')
         paths_all = pd.concat([paths_genuine, paths_attacks])
 
-        '''
-        Dataset contains 10 people
-        Split into 8 for training, 1 for validation, 1 for testing
-        Every person has the same number of samples, but not the same number of attack types
-        '''
-        # split subsets based on person ids
         person_ids = pd.unique(paths_all['id0'])
-        val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
-        train_ids = np.setdiff1d(person_ids, [val_id, test_id])
 
-        # split train/val/test (based on person IDs)
-        paths_train = paths_all[paths_all['id0'].isin(train_ids)]
-        paths_val = paths_all[paths_all['id0'].isin([val_id])]
-        paths_test = paths_all[paths_all['id0'].isin([test_id])]
+        ''' Split dataset according to training mode '''
+        label_nums = list(dataset.label_nums.values())
+        if training_mode == 'all_attacks':
+            ''' Train on all attacks, test on all attacks '''
 
-        # shuffle order
+            paths_all['label'] = paths_all['label_num']  # 0..7
+            '''
+            Dataset contains 10 people
+            Split into 8 for training, 1 for validation, 1 for testing
+            Every person has the same number of samples, but not the same number of attack types
+            '''
+            # split subsets based on person ids
+            val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
+            train_ids = np.setdiff1d(person_ids, [val_id, test_id])
+
+            # split train/val/test (based on person IDs)
+            paths_train = paths_all[paths_all['id0'].isin(train_ids)]
+            paths_val = paths_all[paths_all['id0'].isin([val_id])]
+            paths_test = paths_all[paths_all['id0'].isin([test_id])]
+
+            class_train = class_val = class_test = 'all'
+
+        elif training_mode == 'one_attack':
+            ''' Train on one attack type, test on another '''
+
+            # note: ignoring person ID overlap between training and testing
+
+            """
+            Figure out splitting of:
+                persons w.r.t. attack and genuine
+                a) train on person 1, test on person 2
+                b) train on all persons, test on one unseen person
+                
+            """
+            paths_all['label'] = paths_all['label_bin']  # 0,1
+
+            # attack-splitting
+            if args.attack_test == -1:
+                # random
+                class_train, class_val, class_test = np.random.choice(label_nums, size=3, replace=False)
+            else:
+                # specific attack
+                class_train = args.attack_train
+                class_test = args.attack_test
+                # random other class for validation
+                class_val = np.random.choice(np.setdiff1d(label_nums, [class_train, class_test]), size=None)
+
+            # person-splitting
+            val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
+            train_ids = np.setdiff1d(person_ids, [val_id, test_id])
+
+            # split train/val/test (based on attack type and person IDs)
+            paths_train = paths_all[paths_all['label_num'].isin([bona_fide, class_train])
+                                    & paths_all['id0'].isin(train_ids)]
+            paths_val = paths_all[paths_all['label_num'].isin([bona_fide, class_val])
+                                  & paths_all['id0'].isin([val_id])]
+            paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
+                                   & paths_all['id0'].isin([test_id])]
+
+        elif training_mode == 'unseen_attack':
+            ''' Train on all attacks except one, test on the unseen attack '''
+
+            # note: test set == validation set
+            paths_all['label'] = paths_all['label_bin']  # 0,1
+
+            # attack-splitting
+            class_test = np.random.choice(label_nums, size=None, replace=False)
+            class_val = class_test
+            class_train = np.setdiff1d(label_nums, [class_test])
+
+            # person-splitting
+            test_id = np.random.choice(person_ids, size=None, replace=False)
+            val_id = test_id
+            train_ids = np.setdiff1d(person_ids, [test_id])
+
+            # split train/val/test (based on attack type and person IDs)
+            paths_train = paths_all[paths_all['label_num'].isin(class_train)
+                                    & paths_all['id0'].isin(train_ids)]
+            paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
+                                   & (paths_all['id0'] == test_id)]
+            paths_val = paths_test
+
+        ''' Safety check '''
+        unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
+        assert unique_classes == num_classes, \
+            f'Number of classes in dataset ({unique_classes})' \
+            f' does not match number of classes in model ({num_classes})'
+
+        # shuffle order - useful when limiting dataset size to keep classes balanced
         paths_train = paths_train.sample(frac=1).reset_index(drop=True)
         paths_val = paths_val.sample(frac=1).reset_index(drop=True)
         paths_test = paths_test.sample(frac=1).reset_index(drop=True)
 
         # limit size for prototyping
-        limit = 3200
+        limit = 640  # -1 for no limit, 3200
         paths_train = paths_train[:limit]
         paths_val = paths_val[:limit]
         paths_test = paths_test[:limit]
+
+        print('Dataset labels per split:')
+        for paths in [paths_train, paths_val, paths_test]:
+            print(paths['label'].value_counts())
 
         # dataset loaders
         loader_kwargs = {'num_workers': args.num_workers, 'batch_size': args.batch_size}
@@ -202,6 +317,9 @@ if __name__ == '__main__':
         len_val_ds = len(val_loader.dataset)
         len_test_ds = len(test_loader.dataset)
 
+        len_train_loader = len(train_loader)
+        len_val_loader = len(val_loader)
+        len_test_loader = len(test_loader)
 
     ''' Logging '''
     wb.config = {
@@ -209,6 +327,11 @@ if __name__ == '__main__':
         "batch_size": args.batch_size,
         "optimizer": str(optimizer),
         "dataset_size": len_train_ds,
+        "training_mode": training_mode,
+        "num_classes": num_classes,
+        "class_train": class_train,
+        "class_val": class_val,
+        "class_test": class_test,
     }
 
     config_dump = get_dict(config)
@@ -222,39 +345,10 @@ if __name__ == '__main__':
     print_dict(config_dump)
     print_dict(args_dict)
 
-    # sample prediction
-    if False:
-        img, x, label = next(iter(train_loader))
-        img_batch = preprocess(img)
-
-        model.eval()
-
-        with torch.no_grad():
-            out = model(img_batch)
-
-        pred = out.softmax(dim=1)
-        prediction_hard = torch.argmax(pred, dim=1).numpy()
-        category_name = cat_names[prediction_hard]
-        score = pred[range(len(prediction_hard)), prediction_hard]
-
-        # plot predictions
-        for i in range(img.shape[0]):
-            # convert channels order CWH -> HWC
-            plt.imshow(img[i].permute(1, 2, 0))
-            plt.title(f'Prediction: {category_name[i]}, Score: {score[i]:.2f}')
-            plt.xticks([])
-            plt.yticks([])
-            plt.tight_layout()
-            plt.show()
-
     ''' Training '''
     # run training
     best_loss_val = np.inf
     best_res = None
-
-    len_train_loader = len(train_loader)
-    len_val_loader = len(val_loader)
-    len_test_loader = len(test_loader)
 
     epochs_trained = 0
     for epoch in range(args.epochs):
@@ -319,7 +413,6 @@ if __name__ == '__main__':
                 labels_val.append(label.cpu().numpy())
                 preds_val.append(prediction_hard.cpu().numpy())
 
-
         # loss is averaged over batch already, divide by batch number
         ep_train_loss = ep_train_loss / len_train_loader
         ep_loss_val = ep_loss_val / len_val_loader
@@ -329,8 +422,8 @@ if __name__ == '__main__':
         # log results
         res = {'Loss Training': ep_train_loss,
                'Loss Validation': ep_loss_val,
-               'Accuracy Training': metrics_train['accuracy'],
-               'Accuracy Validation': metrics_val['accuracy'],
+               'Accuracy Training': metrics_train['Accuracy'],
+               'Accuracy Validation': metrics_val['Accuracy'],
                }
         wb.log(res, step=epoch)
 
@@ -391,27 +484,39 @@ if __name__ == '__main__':
 
     metrics_test = compute_metrics(labels_test, preds_test)
 
-    print(f'Test loss: {loss_test:.2f}')
-    print(f'Test accuracy: {metrics_test["accuracy"]:.2f}')
+
+    print(f'\nLoss Test   : {loss_test:.2f}')
+    print(f'Accuracy Test: {metrics_test["Accuracy"]:.2f}')
+    print_dict(metrics_test)
 
     # log results
-    res = {
-        'Loss Test': loss_test,
-        'Accuracy Test': metrics_test["accuracy"],
-    }
-    wb.log(res, step=epoch)
     wb.run.summary['loss_test'] = loss_test
-    wb.run.summary['accu_test'] = metrics_test["accuracy"]
+    wb.run.summary['accu_test'] = metrics_test["Accuracy"]
+    metrics_test = keys_append(metrics_test, ' Test')
+    wb.log(metrics_test, step=epochs_trained)
 
     # plot results
     preds_test = np.concatenate(preds_test)
     labels_test = np.concatenate(labels_test)
-    cm = confusion_matrix(labels_test, preds_test, labels=cat_names, normalize=False, title_suffix='Test',
-                     output_location=outputs_dir, show=show_plots)
 
+    # plot confusion matrix
+    if args.mode == 'one_attack':
+        attack_train_name = dataset.label_names[class_train]
+        attack_test_name = dataset.label_names[class_test]
+        title_suffix = f'Test' \
+                       f'\ntrain: {attack_train_name}({class_train}), test:{attack_test_name}({class_test})'
+    elif args.mode == 'unseen_attack':
+        attack_test_name = dataset.label_names[args.attack_test]
+        title_suffix = f'Test' \
+                       f'\ntrain: all, test:{attack_test_name}({class_test})'
+    else:  # args.mode == 'all_attacks':
+        title_suffix = 'Test' \
+                       '\ntrain: all, test: all'
 
+    cm = confusion_matrix(labels_test, preds_test, labels=cat_names, normalize=False, title_suffix=title_suffix,
+                          output_location=outputs_dir, show=show_plots)
 
-
-
-
-
+    # save config to json
+    # with open(os.path.join(outputs_dir, 'config.json'), 'w') as f:
+    #     json.dump(vars(args), f, indent=4)
+    # todo continue with saving config

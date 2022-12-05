@@ -9,6 +9,13 @@ wandb = "*"
 prettytable = "*"
 seaborn = "*"
 scikit-learn = "*"
+torch = "*"
+torchvision = "*"
+numpy = "*"
+matplotlib = "*"
+scipy = "*"
+tqdm = "*"
+
 
 [dev-packages]
 

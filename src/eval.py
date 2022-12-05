@@ -3,6 +3,7 @@ from os.path import join
 
 # external
 import numpy as np
+import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 
@@ -62,17 +63,17 @@ def compute_metrics(labels, preds, bona_fide=0):
     acer = (apcer + bpcer) / 2  # average error rate
 
     return {
-        'tp': tp,
-        'tn': tn,
-        'fp': fp,
-        'fn': fn,
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'apcer': apcer,
-        'bpcer': bpcer,
-        'acer': acer,
+        '#TP': tp,
+        '#TN': tn,
+        '#FP': fp,
+        '#FN': fn,
+        'Accuracy': accuracy,
+        'Precision': precision,
+        'Recall': recall,
+        'F1': f1,
+        'APCER': apcer,
+        'BPCER': bpcer,
+        'ACER': acer,
     }
 
 
@@ -105,6 +106,11 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
 
     labels_numeric = np.arange(len(labels))
     cm = conf_mat(list(gts), list(predictions_hard), normalize=normalize, labels=labels_numeric)
+
+    # also print confusion matrix
+    print(title)
+    cm = pd.DataFrame(cm, index=labels, columns=labels)
+    print(cm)
 
     sns.set_context('paper', font_scale=1.0)
     fig_cm = sns.heatmap(
