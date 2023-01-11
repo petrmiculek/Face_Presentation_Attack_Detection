@@ -40,10 +40,14 @@ def compute_metrics(labels, preds, bona_fide=0):
     else:
         recall = tp / (tp + fn)
 
+    ''' F1 (micro) '''
     if precision + recall == 0:
         f1 = 0
     else:
         f1 = 2 * (precision * recall) / (precision + recall)
+        # note to self:
+        #   Macro F1 would do an unweighted average of per-class F1s.
+        #   Weighted F1 would weigh the averages by the class support.
 
     ''' Attack Presentation Classification Error Rate (APCER) '''
     # == False Rejection Rate (FRR)

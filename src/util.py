@@ -1,5 +1,14 @@
+# stdlib
+import json
 import time
+
+# external
 from prettytable import PrettyTable
+import numpy as np
+
+# local
+# -
+
 class LogTime:
     def __init__(self):
         self.start = time.time()
@@ -64,5 +73,19 @@ def print_dict(dict_results):
 def xor(a, b):
     return (a and not b) or (not a and b)
 
-def keys_append(dict, append):
-    return {k + append: v for k, v in dict.items()}
+def keys_append(dictionary, suffix):
+    return {k + suffix: v for k, v in dictionary.items()}
+
+
+def save_config(union_dict, path):
+    for k, v in union_dict.items():
+        if type(v) == np.ndarray:
+            union_dict[k] = v.tolist()
+        elif type(v) == np.int64:
+            union_dict[k] = int(v)
+        elif type(v) == np.float64:
+            union_dict[k] = float(v)
+
+    # save config to json
+    with open(path, 'w') as f:
+        json.dump(union_dict, f, indent=4)

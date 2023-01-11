@@ -1,5 +1,6 @@
 # stdlib
 import argparse
+import json
 import logging
 import os
 import datetime
@@ -36,9 +37,9 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
-import rose_youtu_dataset as dataset
+import dataset_rose_youtu as dataset
 from eval import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, xor, keys_append
+from util import get_dict, print_dict, xor, keys_append, save_config
 from model_util import EarlyStopping
 import resnet18
 
@@ -49,22 +50,22 @@ prio:
 
 normal:
 - training: one_attack, unseen_attack
-    - log class chosen for training/val/test
-    - include class names in the confusion matrix title
-
-- log plots to wandb
-- fix W&B 'failed to sample metrics' error
+    - log the class chosen for training/val/test
+    - include the class names in the confusion matrix title
 
 - extract one-to-last layer embeddings (for t-SNE etc.)
-    - resnet18.py
+    - resnet18.py - local model implementation
+
+- log the plots to wandb
 
 less important:
-- 16bit training
 - setup for metacentrum
+- fix W&B 'failed to sample metrics' error
+- 16bit training
 - checkpoint also state of scheduler, optimizer, ...
 
 other:
-- cache function calls (reading annotations)
+- cache function calls (reading annotations?)
 - 
 
 done:
@@ -198,8 +199,7 @@ if __name__ == '__main__':
     ''' Dataset '''
     if True:
         # get annotations (paths to samples + labels)
-        paths_genuine = dataset.read_annotations('genuine')
-        paths_attacks = dataset.read_annotations('attack')
+        paths_genuine, paths_attacks = dataset.read_annotations('both')
         paths_all = pd.concat([paths_genuine, paths_attacks])
 
         person_ids = pd.unique(paths_all['id0'])
@@ -284,13 +284,13 @@ if __name__ == '__main__':
                                     & paths_all['id0'].isin(train_ids)]
             paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
                                    & (paths_all['id0'] == test_id)]
-            paths_val = paths_test
+            paths_val = paths_test  # note: validation == test
 
         ''' Safety check '''
         unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
         assert unique_classes == num_classes, \
-            f'Number of classes in dataset ({unique_classes})' \
-            f' does not match number of classes in model ({num_classes})'
+            f'Number of unique classes in dataset does not match number of classes in model\n' \
+            f'real: {unique_classes}, expected: {num_classes}'
 
         # shuffle order - useful when limiting dataset size to keep classes balanced
         paths_train = paths_train.sample(frac=1).reset_index(drop=True)
@@ -298,7 +298,7 @@ if __name__ == '__main__':
         paths_test = paths_test.sample(frac=1).reset_index(drop=True)
 
         # limit size for prototyping
-        limit = 640  # -1 for no limit, 3200
+        limit = 640  # -1 for no limit, 3200  # TODO dataset size limit, do not forget
         paths_train = paths_train[:limit]
         paths_val = paths_val[:limit]
         paths_test = paths_test[:limit]
@@ -351,7 +351,8 @@ if __name__ == '__main__':
     best_res = None
 
     epochs_trained = 0
-    for epoch in range(args.epochs):
+
+    for epoch in range(epochs_trained, epochs_trained + args.epochs):
         print(f'Epoch {epoch}')
         model.train()
         ep_train_loss = 0
@@ -414,27 +415,29 @@ if __name__ == '__main__':
                 preds_val.append(prediction_hard.cpu().numpy())
 
         # loss is averaged over batch already, divide by batch number
-        ep_train_loss = ep_train_loss / len_train_loader
-        ep_loss_val = ep_loss_val / len_val_loader
+        ep_train_loss /= len_train_loader
+        ep_loss_val /= len_val_loader
 
         metrics_val = compute_metrics(labels_val, preds_val)
 
         # log results
-        res = {'Loss Training': ep_train_loss,
+        res_epoch = {'Loss Training': ep_train_loss,
                'Loss Validation': ep_loss_val,
                'Accuracy Training': metrics_train['Accuracy'],
                'Accuracy Validation': metrics_val['Accuracy'],
                }
-        wb.log(res, step=epoch)
 
         # print results
-        print_dict(res)
+        print_dict(res_epoch)
 
         # save best results
         if ep_loss_val < best_loss_val:
             best_loss_val = ep_loss_val
             # save a deepcopy of res to best_res
-            best_res = deepcopy(res)
+            best_res = deepcopy(res_epoch)
+            best_res['epoch_best'] = epoch
+
+        wb.log(res_epoch, step=epoch)
 
         epochs_trained += 1
         # LR scheduler
@@ -484,7 +487,6 @@ if __name__ == '__main__':
 
     metrics_test = compute_metrics(labels_test, preds_test)
 
-
     print(f'\nLoss Test   : {loss_test:.2f}')
     print(f'Accuracy Test: {metrics_test["Accuracy"]:.2f}')
     print_dict(metrics_test)
@@ -495,7 +497,7 @@ if __name__ == '__main__':
     metrics_test = keys_append(metrics_test, ' Test')
     wb.log(metrics_test, step=epochs_trained)
 
-    # plot results
+    ''' Plot results '''
     preds_test = np.concatenate(preds_test)
     labels_test = np.concatenate(labels_test)
 
@@ -516,7 +518,7 @@ if __name__ == '__main__':
     cm = confusion_matrix(labels_test, preds_test, labels=cat_names, normalize=False, title_suffix=title_suffix,
                           output_location=outputs_dir, show=show_plots)
 
-    # save config to json
-    # with open(os.path.join(outputs_dir, 'config.json'), 'w') as f:
-    #     json.dump(vars(args), f, indent=4)
-    # todo continue with saving config
+    ''' Save config locally '''
+    union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}
+    save_config(union_dict, path=os.path.join(outputs_dir, 'config.json'))
+

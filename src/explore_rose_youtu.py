@@ -12,7 +12,7 @@ import seaborn as sns
 
 # local
 # import config
-from rose_youtu_dataset import read_annotations, labels
+from dataset_rose_youtu import read_annotations, labels
 
 
 def plot_category_counts_per_id(paths_all):
@@ -37,9 +37,29 @@ def plot_category_counts_all_ids(paths_all):
     plt.show()
 
 
+def plot_example_images(paths_all):
+    for i, label_num in enumerate(labels.values()):
+        # get first image for each label
+        try:
+            img_path = paths_all[paths_all['label_num'] == i]['path'].iloc[0]
+        except:
+            print('No images for label', label_num)
+            img = np.zeros((256, 256, 3))
+
+        img = Image.open(img_path)
+        plt.subplot(2, 4, i + 1)
+        plt.imshow(img)
+        plt.title(label_num)
+        plt.axis('off')
+    plt.suptitle('Example images', fontsize=16)
+    plt.tight_layout()
+    plt.show()
+
+
 # if __name__ == '__main__':
 def main():
-    ''' Load data annotations'''
+    """No docstring"""
+    ''' Load data annotations '''
     paths_genuine = read_annotations('genuine')
     paths_attacks = read_annotations('attack')
     paths_all = pd.concat([paths_genuine, paths_attacks])
@@ -85,7 +105,7 @@ def main():
     plt.show()
 
     ''' Plot categories per person ID, per dataset subset '''
-    for subset in [paths_val]:  # '[paths_train, paths_val, paths_test, paths_all]:
+    for subset in [paths_genuine]:  # '[paths_train, paths_val, paths_test, paths_all]:
         # get variable name as string
         subset_name = [k for k, v in locals().items() if v is subset][0]
 
@@ -101,20 +121,3 @@ def main():
         plt.show()
 
 
-def plot_example_images(paths_all):
-    for i, label_num in enumerate(labels.values()):
-        # get first image for each label
-        try:
-            img_path = paths_all[paths_all['label_num'] == i]['path'].iloc[0]
-        except:
-            print('No images for label', label_num)
-            img = np.zeros((256, 256, 3))
-
-        img = Image.open(img_path)
-        plt.subplot(2, 4, i + 1)
-        plt.imshow(img)
-        plt.title(label_num)
-        plt.axis('off')
-    plt.suptitle('Example images', fontsize=16)
-    plt.tight_layout()
-    plt.show()

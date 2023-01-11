@@ -22,9 +22,12 @@ RoseYoutu Dataset
 # install requirements from Pipfile
 pipenv install
 
+# activate environment
 pipenv shell
-python3.10 src/train.py --mode
+python3.10 src/train.py --mode <mode>
 ```
+
+[//]: # (TODO specify mode)
 
 \-\- mode argument:
 unseen_attack - train on all attacks except one, test on the remaining attack
