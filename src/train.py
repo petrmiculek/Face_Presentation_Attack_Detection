@@ -38,7 +38,7 @@ pil_logger.setLevel(logging.INFO)
 # local
 import config
 import dataset_rose_youtu as dataset
-from eval import confusion_matrix, compute_metrics  # , accuracy
+from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, xor, keys_append, save_config
 from model_util import EarlyStopping
 import resnet18
@@ -197,6 +197,8 @@ if __name__ == '__main__':
                                        verbose=True, path=checkpoint_path)
 
     ''' Dataset '''
+
+    ''' RoseYoutu '''
     if True:
         # get annotations (paths to samples + labels)
         paths_genuine, paths_attacks = dataset.read_annotations('both')
