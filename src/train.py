@@ -37,11 +37,11 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
-import dataset_rose_youtu as dataset
 from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, xor, keys_append, save_config
+from util import get_dict, print_dict, keys_append, save_dict_json
 from model_util import EarlyStopping
 import resnet18
+from dataset_base import pick_dataset_version, load_dataset
 
 """
 todo:
@@ -50,7 +50,7 @@ prio:
 
 normal:
 - training: one_attack, unseen_attack
-    - log the class chosen for training/val/test
+    - log the class chosen for training/val/test  #DONE#
     - include the class names in the confusion matrix title
 
 - extract one-to-last layer embeddings (for t-SNE etc.)
@@ -92,8 +92,9 @@ unseen_attack training:
 
 todo what is a good val x test split for one-attack
 """
+
 ''' Global variables '''
-bona_fide = list(dataset.labels.values()).index('genuine')  # == 0
+# -
 
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
@@ -104,9 +105,7 @@ parser.add_argument('-l', '--lr', help='learning rate', type=float, default=conf
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='one_attack')
-# following (2) arguments are for one_attack mode only
-parser.add_argument('-t', '--attack_test', help='attack type to test on (1..7), random by default', type=int, default=-1)
-parser.add_argument('-r', '--attack_train', help='attack type to train on (1..7), random by default', type=int, default=-1)
+parser.add_argument('-d', '--dataset', help='dataset to train on ', type=str, default='rose_youtu')
 
 # print('main is not being run')  # uncomment this when using def main...
 # def main():
@@ -115,18 +114,22 @@ if __name__ == '__main__':
     ''' Parse arguments '''
     args = parser.parse_args()
 
-    if args.mode == 'one_attack' and xor(args.attack_test == -1, args.attack_train == -1):
-        raise ValueError('one_attack mode requires both or none of --attack_test --attack_train arguments')
+    ''' Dataset + Training mode '''
 
-    ''' Setup Training Mode '''
+    # load dataset module
+    if args.dataset == 'rose_youtu':
+        import dataset_rose_youtu as dataset_module
+    elif args.dataset == 'siwm':
+        import dataset_siwm as dataset_module
+    else:
+        raise ValueError(f'Unknown dataset name {args.dataset}')
+
+    # set training mode
     training_mode = args.mode  # 'one_attack' or 'unseen_attack' or 'all_attacks'
-    separate_person_ids = False  # if True, train on one person, test on another
-
-    print(f'Training multiclass softmax CNN on RoseYoutu')
-    print(f'Training mode: {training_mode}')
+    # separate_person_ids = False  # unused: train on one person, test on another
     if training_mode == 'all_attacks':
-        cat_names = dataset.label_names
-        num_classes = len(dataset.labels)
+        cat_names = dataset_module.label_names
+        num_classes = len(dataset_module.labels)
     elif training_mode == 'one_attack':
         cat_names = ['genuine', 'attack']
         num_classes = 2
@@ -135,6 +138,9 @@ if __name__ == '__main__':
         num_classes = 2
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
+
+    print(f'Training multiclass softmax CNN '
+          f'on {args.dataset} dataset in {training_mode} mode')
 
     ''' Setup Run Environment '''
     if "PYCHARM_HOSTED" in os.environ:
@@ -157,9 +163,21 @@ if __name__ == '__main__':
         # Logging Setup
         logging.basicConfig(level=logging.WARNING)
 
+    if True:
+        # training config and logging
         training_run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         config.training_run_id = training_run_id
-        outputs_dir = join('runs', training_run_id)
+
+        wb.config = {
+            "learning_rate": args.lr,
+            "batch_size": args.batch_size,
+            "training_mode": training_mode,
+            "num_classes": num_classes,
+        }
+        wb.init(project="facepad", config=wb.config)
+        run_name = wb.run.name
+        print(f'W&B run name: {run_name}')
+        outputs_dir = join('runs', run_name)
         os.makedirs(outputs_dir, exist_ok=True)
         checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
 
@@ -197,123 +215,16 @@ if __name__ == '__main__':
                                        verbose=True, path=checkpoint_path)
 
     ''' Dataset '''
-
-    ''' RoseYoutu '''
     if True:
-        # get annotations (paths to samples + labels)
-        paths_genuine, paths_attacks = dataset.read_annotations('both')
-        paths_all = pd.concat([paths_genuine, paths_attacks])
+        dataset_meta = pick_dataset_version(args.dataset, args.mode)
+        attack_train = dataset_meta['attack_train']
+        attack_val = dataset_meta['attack_val']
+        attack_test = dataset_meta['attack_test']
 
-        person_ids = pd.unique(paths_all['id0'])
-
-        ''' Split dataset according to training mode '''
-        label_nums = list(dataset.label_nums.values())
-        if training_mode == 'all_attacks':
-            ''' Train on all attacks, test on all attacks '''
-
-            paths_all['label'] = paths_all['label_num']  # 0..7
-            '''
-            Dataset contains 10 people
-            Split into 8 for training, 1 for validation, 1 for testing
-            Every person has the same number of samples, but not the same number of attack types
-            '''
-            # split subsets based on person ids
-            val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
-            train_ids = np.setdiff1d(person_ids, [val_id, test_id])
-
-            # split train/val/test (based on person IDs)
-            paths_train = paths_all[paths_all['id0'].isin(train_ids)]
-            paths_val = paths_all[paths_all['id0'].isin([val_id])]
-            paths_test = paths_all[paths_all['id0'].isin([test_id])]
-
-            class_train = class_val = class_test = 'all'
-
-        elif training_mode == 'one_attack':
-            ''' Train on one attack type, test on another '''
-
-            # note: ignoring person ID overlap between training and testing
-
-            """
-            Figure out splitting of:
-                persons w.r.t. attack and genuine
-                a) train on person 1, test on person 2
-                b) train on all persons, test on one unseen person
-                
-            """
-            paths_all['label'] = paths_all['label_bin']  # 0,1
-
-            # attack-splitting
-            if args.attack_test == -1:
-                # random
-                class_train, class_val, class_test = np.random.choice(label_nums, size=3, replace=False)
-            else:
-                # specific attack
-                class_train = args.attack_train
-                class_test = args.attack_test
-                # random other class for validation
-                class_val = np.random.choice(np.setdiff1d(label_nums, [class_train, class_test]), size=None)
-
-            # person-splitting
-            val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
-            train_ids = np.setdiff1d(person_ids, [val_id, test_id])
-
-            # split train/val/test (based on attack type and person IDs)
-            paths_train = paths_all[paths_all['label_num'].isin([bona_fide, class_train])
-                                    & paths_all['id0'].isin(train_ids)]
-            paths_val = paths_all[paths_all['label_num'].isin([bona_fide, class_val])
-                                  & paths_all['id0'].isin([val_id])]
-            paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
-                                   & paths_all['id0'].isin([test_id])]
-
-        elif training_mode == 'unseen_attack':
-            ''' Train on all attacks except one, test on the unseen attack '''
-
-            # note: test set == validation set
-            paths_all['label'] = paths_all['label_bin']  # 0,1
-
-            # attack-splitting
-            class_test = np.random.choice(label_nums, size=None, replace=False)
-            class_val = class_test
-            class_train = np.setdiff1d(label_nums, [class_test])
-
-            # person-splitting
-            test_id = np.random.choice(person_ids, size=None, replace=False)
-            val_id = test_id
-            train_ids = np.setdiff1d(person_ids, [test_id])
-
-            # split train/val/test (based on attack type and person IDs)
-            paths_train = paths_all[paths_all['label_num'].isin(class_train)
-                                    & paths_all['id0'].isin(train_ids)]
-            paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
-                                   & (paths_all['id0'] == test_id)]
-            paths_val = paths_test  # note: validation == test
-
-        ''' Safety check '''
-        unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
-        assert unique_classes == num_classes, \
-            f'Number of unique classes in dataset does not match number of classes in model\n' \
-            f'real: {unique_classes}, expected: {num_classes}'
-
-        # shuffle order - useful when limiting dataset size to keep classes balanced
-        paths_train = paths_train.sample(frac=1).reset_index(drop=True)
-        paths_val = paths_val.sample(frac=1).reset_index(drop=True)
-        paths_test = paths_test.sample(frac=1).reset_index(drop=True)
-
-        # limit size for prototyping
-        limit = 640  # -1 for no limit, 3200  # TODO dataset size limit, do not forget
-        paths_train = paths_train[:limit]
-        paths_val = paths_val[:limit]
-        paths_test = paths_test[:limit]
-
-        print('Dataset labels per split:')
-        for paths in [paths_train, paths_val, paths_test]:
-            print(paths['label'].value_counts())
-
-        # dataset loaders
-        loader_kwargs = {'num_workers': args.num_workers, 'batch_size': args.batch_size}
-        train_loader = dataset.RoseYoutuLoader(paths_train, **loader_kwargs, shuffle=True)
-        val_loader = dataset.RoseYoutuLoader(paths_val, **loader_kwargs)
-        test_loader = dataset.RoseYoutuLoader(paths_test, **loader_kwargs)
+        loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
+                         'pin_memory': True}
+        train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=-1,
+                                                             quiet=False, **loader_kwargs)
 
         len_train_ds = len(train_loader.dataset)
         len_val_ds = len(val_loader.dataset)
@@ -324,24 +235,23 @@ if __name__ == '__main__':
         len_test_loader = len(test_loader)
 
     ''' Logging '''
-    wb.config = {
-        "learning_rate": args.lr,
-        "batch_size": args.batch_size,
-        "optimizer": str(optimizer),
-        "dataset_size": len_train_ds,
-        "training_mode": training_mode,
-        "num_classes": num_classes,
-        "class_train": class_train,
-        "class_val": class_val,
-        "class_test": class_test,
-    }
+    wb.config.update(
+        {"run_name": run_name,
+         "optimizer": str(optimizer),
+         "dataset_size": len_train_ds,
+         "class_train": attack_train,
+         "class_val": attack_val,
+         "class_test": attack_test,
+         "train_ids": dataset_meta['train_ids'],
+         "val_id": dataset_meta['val_id'],
+         "test_id": dataset_meta['test_id'],
+         })
 
     config_dump = get_dict(config)
     wb.config.update(config_dump)
     # global args_global
     args_dict = get_dict(args)
     wb.config.update(args_dict)
-    wb.init(project="facepad", config=wb.config)
 
     # Print setup
     print_dict(config_dump)
@@ -385,7 +295,7 @@ if __name__ == '__main__':
 
                     # save predictions
                     labels_train.append(label.cpu().numpy())
-                    preds_train.append(prediction_hard.cpu().numpy())  # todo check detach
+                    preds_train.append(prediction_hard.detach().cpu().numpy())
 
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')
@@ -424,10 +334,10 @@ if __name__ == '__main__':
 
         # log results
         res_epoch = {'Loss Training': ep_train_loss,
-               'Loss Validation': ep_loss_val,
-               'Accuracy Training': metrics_train['Accuracy'],
-               'Accuracy Validation': metrics_val['Accuracy'],
-               }
+                     'Loss Validation': ep_loss_val,
+                     'Accuracy Training': metrics_train['Accuracy'],
+                     'Accuracy Validation': metrics_val['Accuracy'],
+                     }
 
         # print results
         print_dict(res_epoch)
@@ -462,7 +372,7 @@ if __name__ == '__main__':
     print('Best results:')
     print_dict(best_res)
 
-    # test eval
+    ''' Test set evaluation '''
     model.eval()
     preds_test = []
     labels_test = []
@@ -489,11 +399,11 @@ if __name__ == '__main__':
 
     metrics_test = compute_metrics(labels_test, preds_test)
 
+    ''' Log results '''
     print(f'\nLoss Test   : {loss_test:.2f}')
     print(f'Accuracy Test: {metrics_test["Accuracy"]:.2f}')
     print_dict(metrics_test)
 
-    # log results
     wb.run.summary['loss_test'] = loss_test
     wb.run.summary['accu_test'] = metrics_test["Accuracy"]
     metrics_test = keys_append(metrics_test, ' Test')
@@ -503,24 +413,35 @@ if __name__ == '__main__':
     preds_test = np.concatenate(preds_test)
     labels_test = np.concatenate(labels_test)
 
-    # plot confusion matrix
+    ''' Confusion matrix '''
     if args.mode == 'one_attack':
-        attack_train_name = dataset.label_names[class_train]
-        attack_test_name = dataset.label_names[class_test]
+        attack_train_name = dataset_module.label_names[attack_train]
+        attack_test_name = dataset_module.label_names[attack_test]
         title_suffix = f'Test' \
-                       f'\ntrain: {attack_train_name}({class_train}), test:{attack_test_name}({class_test})'
+                       f'\ntrain: {attack_train_name}({attack_train}), ' \
+                       f'test:{attack_test_name}({attack_test})'
     elif args.mode == 'unseen_attack':
-        attack_test_name = dataset.label_names[args.attack_test]
+        attack_test_name = dataset_module.label_names[args.attack_test]
         title_suffix = f'Test' \
-                       f'\ntrain: all, test:{attack_test_name}({class_test})'
+                       f'\ntrain: all, ' \
+                       f'test:{attack_test_name}({attack_test})'
     else:  # args.mode == 'all_attacks':
         title_suffix = 'Test' \
-                       '\ntrain: all, test: all'
+                       '\ntrain: all, ' \
+                       'test: all'
 
-    cm = confusion_matrix(labels_test, preds_test, labels=cat_names, normalize=False, title_suffix=title_suffix,
-                          output_location=outputs_dir, show=show_plots)
+    path_cm = join(outputs_dir, 'confusion_matrix' + '.pdf')
+    cm = confusion_matrix(labels_test, preds_test, labels=cat_names,
+                          normalize=False, title_suffix=title_suffix,
+                          output_location=path_cm, show=show_plots)
 
+    # binary confusion matrix
+    if args.mode == 'all_attacks':
+        path_cm = join(outputs_dir, 'confusion_matrix_binary' + '.pdf')
+        cm = confusion_matrix(labels_test > 0, preds_test > 0, labels=['genuine', 'attack'],
+                              normalize=False, title_suffix=title_suffix,
+                              output_location=path_cm, show=show_plots)
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}
-    save_config(union_dict, path=os.path.join(outputs_dir, 'config.json'))
-
+    print_dict(union_dict)
+    save_dict_json(union_dict, path=os.path.join(outputs_dir, 'config.json'))

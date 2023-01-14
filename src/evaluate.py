@@ -17,11 +17,15 @@ sys.path.extend(sys_path_extension)
 # external
 import matplotlib.pyplot as plt
 import torch
+from torch.nn.functional import softmax
 # from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import ResNet18_Weights
+
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
+
+# TODO WARNING - this script does not load dataset from the hub (not reproducible)
 
 os.environ["WANDB_SILENT"] = "true"
 
@@ -38,11 +42,12 @@ pil_logger.setLevel(logging.INFO)
 import config
 import dataset_rose_youtu as dataset
 from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, xor, keys_append, save_config
+from util import get_dict, print_dict, xor, keys_append, save_dict_json
 from model_util import EarlyStopping
 import resnet18
 
-run_dir = 'runs/2023-01-10_14-41-03'
+# run_dir = 'runs/2023-01-10_14-41-03'  # 'unseen_attack'
+run_dir = 'runs/2023-01-10_15-12-22'  # 'all_attacks'
 
 model = None
 device = None
@@ -87,31 +92,33 @@ def eval_loop(loader):
 # def main():
 #     global model, device, preprocess, criterion  # disable when not using def main
 if __name__ == '__main__':
-    # training mode: 1, unseen, all
-    training_mode = 'all_attacks'
-
-    ''' Initialization '''
-    print(f"Available GPUs: {torch.cuda.device_count()}")
-    print(f"Current device: {torch.cuda.current_device()}")
-    print(f"Device name: {torch.cuda.get_device_name(0)}")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f'Running on device: {device}')
-
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
+
+    # training mode: 1, unseen, all
+    training_mode = config_dict['mode']  # 'all_attacks'
+
+    ''' Initialization '''
+    print(f"Available GPUs: {torch.cuda.device_count()}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f'Running on device: {device}')
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name(0)}")
 
     ''' Load Model '''
 
     weights = ResNet18_Weights.IMAGENET1K_V1
     model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+    model.fc = torch.nn.Linear(512, config_dict['num_classes'], bias=True)
 
     preprocess = weights.transforms()
 
     # load model_checkpoint.pt
-    model_checkpoint = torch.load(join(run_dir, 'model_checkpoint.pt'))
+    # model_checkpoint = torch.load(join(run_dir, 'model_checkpoint.pt'))
     # model.load_state_dict(model_checkpoint['model_state_dict'])
     # model.load_state_dict(model_checkpoint)
+    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt')))
 
     model.to(device)
     model.eval()
@@ -120,6 +127,9 @@ if __name__ == '__main__':
 
     ''' Load Data (copied from train.py)'''
     if True:
+        dataset_name = config_dict['dataset_name']
+        # note for ^: we might train on X and evaluate on Y
+
         paths_genuine, paths_attacks = dataset.read_annotations('both')
         paths_all = pd.concat([paths_genuine, paths_attacks])
 
@@ -130,7 +140,7 @@ if __name__ == '__main__':
         num_classes = len(dataset.labels)
 
         ''' Split dataset according to training mode '''
-        label_nums = list(dataset.label_nums.values())
+        label_nums = list(dataset.label_to_nums.values())
         if training_mode == 'all_attacks':
             ''' Train on all attacks, test on all attacks '''
 
@@ -141,7 +151,7 @@ if __name__ == '__main__':
             Every person has the same number of samples, but not the same number of attack types
             '''
             # split subsets based on person ids
-            val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
+            val_id, test_id = np.random.choice(person_ids, size=2, replace=False)  # todo: not repeatable
             train_ids = np.setdiff1d(person_ids, [val_id, test_id])
 
             # split train/val/test (based on person IDs)
@@ -171,10 +181,10 @@ if __name__ == '__main__':
         paths_test = paths_test[:limit]
 
         # dataset loaders
-        loader_kwargs = {'num_workers': 4, 'batch_size': 64}  # todo: as arguments
-        train_loader = dataset.RoseYoutuLoader(paths_train, **loader_kwargs)
-        val_loader = dataset.RoseYoutuLoader(paths_val, **loader_kwargs)
-        test_loader = dataset.RoseYoutuLoader(paths_test, **loader_kwargs)
+        loader_kwargs = {'num_workers': 4, 'batch_size': 16, 'shuffle': True}  # todo: as arguments
+        train_loader = dataset.Loader(paths_train, **loader_kwargs)
+        val_loader = dataset.Loader(paths_val, **loader_kwargs)
+        test_loader = dataset.Loader(paths_test, **loader_kwargs)
 
         len_train_ds = len(train_loader.dataset)
         len_val_ds = len(val_loader.dataset)
@@ -186,70 +196,90 @@ if __name__ == '__main__':
 
         label_names = dataset.label_names
 
-
     # Print setup
-    print_dict(config_dict)
-    # print_dict(args_dict)  # todo parse args
+    # print_dict(config_dict)
+    # print_dict(args_dict)  # todo do: parse args
 
-    ''' Evaluation '''
-    print('Training set')
-    res_train, preds_train, labels_train = eval_loop(train_loader)
-    print_dict(res_train)
+    if False:
+        ''' Evaluation '''
+        print('Training set')
+        res_train, preds_train, labels_train = eval_loop(train_loader)
+        print_dict(res_train)
 
-    print('Validation set')
-    res_val, preds_val, labels_val = eval_loop(val_loader)
-    print_dict(res_val)
+        print('Validation set')
+        res_val, preds_val, labels_val = eval_loop(val_loader)
+        print_dict(res_val)
 
-    print('Test set')
-    res_test, preds_test, labels_test = eval_loop(test_loader)
-    print_dict(res_test)
+        print('Test set')
+        res_test, preds_test, labels_test = eval_loop(test_loader)
+        print_dict(res_test)
 
     ''' Explainability '''
     from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
     from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
     from pytorch_grad_cam.utils.image import show_cam_on_image
-
-    target_layers = [model.layer4[-1]]
-
-    img, label = next(iter(test_loader))
-    img, label = img[0:1].to(device), label[0:1].to(device)
-
-    grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
-
-    targets = [ClassifierOutputTarget(cat) for cat in range(8)]
-
-    cams = []
-    for t in targets:
-        grayscale_cam = grad_cam(input_tensor=img, targets=[t])
-
-        # In this example grayscale_cam has only one image in the batch:
-        grayscale_cam = grayscale_cam[0, :]
-
-        img_np = img[0].cpu().numpy().transpose(1, 2, 0)
-        visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
-        cams.append(visualization)
-
     import seaborn as sns
-    sns.set_context('poster')
-    fig, axs = plt.subplots(3, 3, figsize=(20, 20))
-    # plot original image in top-left
-    plt.subplot(3, 3, 1)
-    plt.imshow(img_np)
-    plt.title('Original image')
-    plt.axis('off')
 
-    for i, c in enumerate(cams):
-        plt.subplot(3, 3, i + 2)
-        plt.imshow(visualization)
-        plt.title(label_names[i])
-        plt.axis('off')
-        # remove margin around image
-        # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    if True:
+        cam_dir = join('images_plots', 'cam')
+        os.makedirs(cam_dir, exist_ok=True)
 
-    plt.tight_layout()
-    plt.show()
+        target_layers = [model.layer4[-1]]
 
-    # note: results look the same for all classes.
-    # the targets may have a wrong format, so the most-predicted class is used for all of the visualizations
+        imgs, labels = next(iter(test_loader))
+        preds_raw = model.forward(imgs.to(device))
+        preds = softmax(preds_raw, dim=1).cpu().detach().numpy()
 
-    # todo: understand grad_cam code to reimplement myself
+        # for i, _ in enumerate(imgs):
+        i = 0
+        img, label = imgs[i:i + 1], labels[i:i + 1]  # img 4D, label 1D
+        label_scalar = label[0].item()  # label 0D
+        img_np = img[i].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+
+        methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+
+        for method in tqdm(methods):
+            method_name = method.__name__
+
+            grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
+
+            targets = [ClassifierOutputTarget(cat) for cat in range(num_classes)]
+
+            cams = []
+            overlayed = []
+            for k, t in enumerate(targets):
+                grayscale_cam = grad_cam(input_tensor=img, targets=[t])  # img 4D
+
+                # In this example grayscale_cam has only one image in the batch:
+                grayscale_cam = grayscale_cam[0, ...]  # -> 3D
+
+                visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
+                cams.append(grayscale_cam)
+                overlayed.append(visualization)
+
+            ''' Plot CAMs '''
+            sns.set_context('poster')
+            fig, axs = plt.subplots(3, 3, figsize=(20, 20))
+            plt.subplot(3, 3, 1)
+            plt.imshow(img_np)
+            plt.title('Original image')
+            plt.axis('off')
+
+            for j, c in enumerate(overlayed):
+                plt.subplot(3, 3, j + 2)
+                plt.imshow(c)
+                label_pred_score = f'{preds[i, j]:.2f}'
+                matches_label = f' (GT)' if j == label else ''
+                plt.title(label_names[j] + label_pred_score + matches_label)
+                plt.axis('off')
+                # remove margin around image
+                # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+            plt.tight_layout()
+            # plt.show()
+
+            # save figure fig to path
+            path = join(cam_dir, f'{method_name}_{dataset_name}_img{i}_gt{label_scalar}.png')
+            fig.savefig(path, bbox_inches='tight', pad_inches=0)
+
+            # labels names and order might be mixed up.

@@ -1,11 +1,12 @@
 # stdlib
-# -
+from os.path import join
 
 # external
 from PIL import Image
 
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose, Resize, Normalize, ConvertImageDtype, ToPILImage
+import pandas as pd
 
 # local
 # -
@@ -69,3 +70,73 @@ def StandardLoader(dataset_class, annotations, **kwargs):
     loader = DataLoader(dataset, **kwargs_dataset)
 
     return loader
+
+
+def pick_dataset_version(name, mode):
+    """
+    Pick dataset version.
+
+    :param name: dataset name
+    :param mode: training mode
+    :return: metadata pandas series
+    """
+    path_datasets_csv = join('config', 'datasets.csv')
+    datasets = pd.read_csv(path_datasets_csv)
+    available = datasets[['dataset_name', 'training_mode']].values
+
+    # filter by name
+    datasets = datasets[datasets['dataset_name'] == name]
+    if len(datasets) == 0:
+        raise ValueError(f'No dataset with name {name}. '
+                         f'Available datasets:\n{available}')
+
+    available = datasets[['dataset_name', 'training_mode']].values
+    # filter by training mode
+    datasets = datasets[datasets['training_mode'] == mode]
+    if len(datasets) == 0:
+        raise ValueError(f'No dataset with name {name} and mode {mode}. '
+                         f'Available datasets:\n{available}')
+
+    elif len(datasets) > 1:
+        available = datasets[['dataset_name', 'training_mode']].values
+        raise ValueError(f'Multiple datasets with name {name} and mode {mode}. '
+                         f'Available datasets:\n{available}')
+
+    return datasets.iloc[0]
+
+
+def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kwargs):
+    # name = metadata_row['dataset_name']  # could reimport dataset module here
+
+    # load annotations
+    paths_train = pd.read_csv(metadata_row['path_train'])
+    paths_val = pd.read_csv(metadata_row['path_val'])
+    paths_test = pd.read_csv(metadata_row['path_test'])
+
+    shuffle = loader_kwargs.pop('shuffle', False)
+    # shuffle initial order
+    if limit != -1 or shuffle:
+        # shuffle when limiting dataset size to keep classes balanced
+        paths_train = paths_train.sample(frac=1).reset_index(drop=True)
+        paths_val = paths_val.sample(frac=1).reset_index(drop=True)
+        paths_test = paths_test.sample(frac=1).reset_index(drop=True)
+
+        # limit dataset size
+        print(f'Limiting dataset (each split) to {limit} samples.')
+        paths_train = paths_train[:limit]
+        paths_val = paths_val[:limit]
+        paths_test = paths_test[:limit]
+
+    # print label distributions
+    if not quiet:
+        print('Dataset labels per split:')
+        it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
+        for split, paths in it:
+            print(f'{split}:', list(paths['label'].value_counts().sort_index()))
+
+    # data loaders
+    loader_train = dataset_module.Loader(paths_train, **loader_kwargs, shuffle=shuffle)
+    loader_val = dataset_module.Loader(paths_val, **loader_kwargs)
+    loader_test = dataset_module.Loader(paths_test, **loader_kwargs)
+
+    return loader_train, loader_val, loader_test

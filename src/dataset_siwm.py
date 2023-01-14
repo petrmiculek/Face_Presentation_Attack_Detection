@@ -15,12 +15,11 @@ from matplotlib import pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 
-# from torchvision.transforms import ToTensor, Compose, Resize, Normalize, ConvertImageDtype, ToPILImage
-from torch.utils.data import DataLoader, Dataset
-
 # local
 # import config
 from dataset_base import BaseDataset, StandardLoader
+
+name = 'siwm'
 
 ''' Hardcoded dataset paths '''
 data_root_dir = '/mnt/sdb1/dp/siw_m_dataset'  # todo change
@@ -133,12 +132,12 @@ def read_annotations(f):
     return annotations
 
 
-class SIWMDataset(BaseDataset):
+class Dataset(BaseDataset):
     pass
 
 
-def SIWMLoader(annotations, **kwargs):
-    return StandardLoader(SIWMDataset, annotations, **kwargs)
+def Loader(annotations, **kwargs):
+    return StandardLoader(Dataset, annotations, **kwargs)
 
 
 def plot_sample_images(annotations):
@@ -181,10 +180,10 @@ if __name__ == '__main__':
         loader_siwm = SIWMLoader(annotations, batch_size=4, shuffle=True)
 
         # compare SIW-M to RoseYoutu
-        from dataset_rose_youtu import RoseYoutuLoader, read_annotations as read_annotations_rose_youtu
+        from dataset_rose_youtu import Loader, read_annotations as read_annotations_rose_youtu
         annotations_rose = read_annotations_rose_youtu('attack')
         annotations_rose['label'] = annotations_rose['label_bin']
-        loader_rose = RoseYoutuLoader(annotations_rose, batch_size=4, shuffle=True)
+        loader_rose = Loader(annotations_rose, batch_size=4, shuffle=True)
 
         ''' Check reading from DataLoader with both datasets '''
         for i, (x, y) in enumerate(loader_rose):  # loader_siwm
@@ -242,7 +241,7 @@ if __name__ == '__main__':
             mask_fullhd = sizes == (1920, 1080)  # -> [[True, True] or [False, False]]
             mask_fullhd = np.all(mask_fullhd, axis=1)
 
-            sizes.shape  # (14650, 2)
+            # sizes.shape  # (14650, 2)
 
         # parse bbox values
         annotations['bbox'] = annotations['bbox'].apply(lambda x: [float(y) for y in x[1:-1].split(',')])

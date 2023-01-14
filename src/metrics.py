@@ -84,17 +84,13 @@ def compute_metrics(labels, preds, bona_fide=0):
 
 def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, show=True, **kwargs):
     """Create and show/save confusion matrix"""
-    # if labels is None:
-    #     # labels = list(map(str, range(np.max(gts) + 1)))
-    #     labels = list(range(np.max(gts) + 1))
-    # Problem with labels: data might not include all values
 
     model_name = kwargs.pop('model_name', 'UnnamedModel')
     normalize = kwargs.pop('normalize', False)
     title_suffix = kwargs.pop('title_suffix', '')
 
     title = 'Confusion Matrix' + (' - ' + title_suffix if title_suffix else '')
-    epochs_trained = '20'
+    # epochs_trained = '20'
     plot_kwargs = {}
     if normalize:
         # {'true', 'pred', 'all'}, default = None
@@ -111,7 +107,7 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
     labels_numeric = np.arange(len(labels))
     cm = conf_mat(list(gts), list(predictions_hard), normalize=normalize, labels=labels_numeric)
 
-    # also print confusion matrix
+    # also print the confusion matrix
     print(title)
     cm = pd.DataFrame(cm, index=labels, columns=labels)
     print(cm)
@@ -137,7 +133,7 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
         fig_cm.figure.show()
 
     if output_location:
-        fig_cm.figure.savefig(join(output_location, 'confusion_matrix' + '.pdf'),
+        fig_cm.figure.savefig(output_location,
                               bbox_inches='tight')
 
     # plt.close(fig_cm.figure)

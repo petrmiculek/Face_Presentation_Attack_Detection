@@ -10,6 +10,7 @@ import numpy as np
 # -
 
 class LogTime:
+    """Log times during run, print at the end"""
     def __init__(self):
         self.start = time.time()
         self.times = []
@@ -28,16 +29,10 @@ class LogTime:
 
 
 def count_parameters(model):
-    """
-    Counts total number of trainable parameters of given torch model. Prints table of its layers.
-
-    :param model: torch model of NN
-
-    :return: Number of trainable parameters.
-    """
+    """Count total number of trainable parameters of a torch model. Prints table of its layers."""
 
     table = PrettyTable(["Modules", "Parameters"])
-    total_params = 0
+    params = 0
 
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
@@ -45,23 +40,25 @@ def count_parameters(model):
 
         param = parameter.numel()
         table.add_row([name, param])
-        total_params += param
+        params += param
 
     print(table)
-    print(f"Total Trainable Params: {total_params}")
+    print(f"Params#: {params}")
 
-    return total_params
+    return params
 
 
 def get_dict(obj):
+    """Get object's attributes as a dictionary."""
     return {key: value for key, value
             in obj.__dict__.items()
             if not key.startswith('_')}
 
 
-def print_dict(dict_results):
+def print_dict(dictionary):
+    """Print dictionary formatted."""
     print('')  # newline
-    for k, v in dict_results.items():
+    for k, v in dictionary.items():
         print(f'\t{k:20s}:', end='')
         if isinstance(v, float):
             print(f' {v:06.4f}')
@@ -71,13 +68,16 @@ def print_dict(dict_results):
             print(f' {v}')
 
 def xor(a, b):
+    """XOR of two boolean values."""
     return (a and not b) or (not a and b)
 
 def keys_append(dictionary, suffix):
+    """Appends suffix to all keys in dictionary."""
     return {k + suffix: v for k, v in dictionary.items()}
 
 
-def save_config(union_dict, path):
+def save_dict_json(union_dict, path):
+    # make dictionary serializable as JSON
     for k, v in union_dict.items():
         if type(v) == np.ndarray:
             union_dict[k] = v.tolist()
@@ -89,3 +89,12 @@ def save_config(union_dict, path):
     # save config to json
     with open(path, 'w') as f:
         json.dump(union_dict, f, indent=4)
+
+
+def get_var_name(var, locals_foreigners):
+    """Get variable name as string."""
+    for k, v in locals_foreigners.items():
+        if v is var:
+            return k
+
+    return 'unknown_var'

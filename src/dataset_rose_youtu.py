@@ -2,12 +2,8 @@
 import logging
 import os
 from os.path import join
-import re
 
 # external
-import torch
-import torchvision
-from torchvision import transforms
 from PIL import Image
 import numpy as np
 import pandas as pd
@@ -32,20 +28,27 @@ TODO:
 """
 Rose Youtu Dataset
 """
+name = 'rose_youtu'
+
 labels = {
-    'G': 'genuine',  # bona-fide, no attack, 0
-    'Ps': 'printed still',
-    'Pq': 'printed quivering',
-    'Vl': 'video lenovo',
-    'Vm': 'video mac',
-    'Mc': 'mask cropped',
-    'Mf': 'mask full',
+    'G': 'Genuine',  # bona-fide, no attack, 0
+    'Ps': 'Printed still',
+    'Pq': 'Printed quivering',
+    'Vl': 'Video lenovo',
+    'Vm': 'Video mac',
+    'Mc': 'Mask cropped',
+    'Mf': 'Mask full',
     'Mu': 'Mask upper',
     # 'Ml': 'Mask lower'  # never occurs
 }
 
-label_nums = dict(zip(labels.keys(), range(len(labels))))
+label_to_nums = dict(zip(labels.keys(), range(len(labels))))
 label_names = list(labels.values())
+label_nums = list(label_to_nums.values())
+genuine_num = 0
+attack_nums = [1, 2, 3, 4, 5, 6, 7]
+# label_attack = list(label_to_nums.values())
+# label_attack.remove(label_genuine)
 
 speaking = {
     'T': 'true',  # talking
@@ -67,7 +70,7 @@ glasses = {
 # ############################################### #
 
 
-data_root_dir = join(os.pardir, 'data', 'client')
+data_root_dir = join(os.pardir, 'data', 'client')  # todo provide "pardir" from outside
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')
@@ -104,7 +107,7 @@ def _read_annotations(path, samples_dir):
                                 'id0': int(s[1]),
                                 'label_bin': int(s[2]),
                                 'label_dir': label_dir,
-                                'label_num': label_nums[label_text],
+                                'label_num': label_to_nums[label_text],
                                 **info})
             else:
                 count_failed += 1
@@ -177,18 +180,20 @@ def info_from_filename(filename):
 
     return dict(zip(keys, values))
 
-class RoseYoutuDataset(BaseDataset):
+
+class Dataset(BaseDataset):
     pass
 
-def RoseYoutuLoader(annotations, **kwargs):
-    return StandardLoader(RoseYoutuDataset, annotations, **kwargs)
+
+def Loader(annotations, **kwargs):
+    return StandardLoader(Dataset, annotations, **kwargs)
 
 
 # def main():
 if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
     paths_genuine = read_annotations('genuine', 'label_num')
-    genuine_ds = RoseYoutuDataset(paths_genuine)
+    genuine_ds = Dataset(paths_genuine)
 
     # show first image
     img, label = genuine_ds[0]
@@ -197,9 +202,9 @@ if __name__ == '__main__':
     plt.show()
 
     ''' Get Dataset Loaders '''
-    genuine_loader = RoseYoutuLoader(paths_genuine, batch_size=4)
+    genuine_loader = Loader(paths_genuine, batch_size=4)
     paths_attacks = read_annotations('attack', 'label_num')
-    attack_loader = RoseYoutuLoader(paths_attacks, batch_size=4)
+    attack_loader = Loader(paths_attacks, batch_size=4)
 
     imgs, ys = next(iter(genuine_loader))
     print(imgs.shape, ys.shape)
