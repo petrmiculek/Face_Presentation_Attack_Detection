@@ -12,6 +12,8 @@ doing:
 
 todo:
 
+* how about lime?
+
 * train with SIW-M dataset
 * dataset-independent train: test
 * saving model: make sure it can be re-initialized (seems to work for evaluate)
@@ -29,7 +31,7 @@ note:
 * no bbox faces from siw-m excluded from training, could be used for extra human eval
 * dataset was cropped by resizing the bbox to a square (as opposed to keeping the original aspect ratio)
 * you're also explaining the code - mention the use-cases and give short script descriptions
-*
+* slowing down training: images in original size, many small files (h5)
 
 #DONE# #DONE# #DONE#
 done:

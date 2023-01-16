@@ -150,13 +150,75 @@ def plot_sample_images(annotations):
     plt.figure(figsize=(10, 10))
     for i, label in enumerate(unique_labels):
         plt.subplot(5, 3, i + 1)
-        image = Image.open(annotations[annotations['spoof_info'] == label]['image_path'].iloc[0])
+        image = Image.open(annotations[annotations['spoof_info'] == label]['path'].iloc[0])
         plt.imshow(image)
         plt.title(label)
         plt.axis('off')
 
+    plt.suptitle('SIW-M Example Images', fontsize=20)
     plt.tight_layout()
+    path = join('images_plots', 'siwm_example_images.pdf')
+    plt.savefig(path, bbox_inches='tight', pad_inches=0)
+
     plt.show()
+
+
+def remove_missing_bbox(annotations):
+    """
+    Remove annotations with missing bounding box
+
+    bbox is stored as a string in the format [x1, y1, dx, dy]
+    missing values have a NaN float value
+
+    :param annotations:
+    :return:
+    """
+
+    # list all unique types of bbox
+    bbox_types = annotations['bbox'].apply(lambda x: type(x))
+
+    # no bbox detected
+    from copy import deepcopy
+    idx_float = bbox_types[bbox_types != str].index
+    no_bbox_samples = deepcopy(annotations.iloc[idx_float])
+    # save no_bbox_samples to csv
+    no_bbox_samples.to_csv('no_bbox_samples.csv')
+
+    # plot spoof_info distribution for no_bbox_samples
+    if False:
+        value_counts = no_bbox_samples['spoof_info'].value_counts()
+        print(value_counts)
+        value_counts.plot.bar()
+        plt.tight_layout()
+        plt.show()
+
+    # copy images with no bbox to a new folder
+    if False:
+        import os
+        import shutil
+        target_dir = '/mnt/sdb1/dp/siw_m_dataset/no_bbox_samples'
+        os.makedirs(target_dir)
+        for i, r in no_bbox_samples.iterrows():
+            shutil.copy(r['path'], target_dir)
+
+    # plot samples without bbox
+    if False:
+        it = annotations.iloc[idx_float].iterrows()
+        for i, t in enumerate(it):
+            j, r = t
+            image = Image.open(r['path'])
+            plt.imshow(image)
+            plt.show()
+            print(f'{i}/{len(idx_float)}: {j} {r["spoof_info"]}')
+            input()
+            plt.close()
+
+    # remove indexes with no bbox
+    if False:
+        annotations = annotations.drop(axis=0, index=idx_float)
+        annotations.to_csv('mnt/sdb1/dp/siw_m_dataset/annotations_ready.csv')
+
+    # todo: return annotations, save them from elsewhere
 
 
 if __name__ == '__main__':
@@ -177,10 +239,12 @@ if __name__ == '__main__':
                 break
             input()  # wait for key press
 
+    if False:
         loader_siwm = SIWMLoader(annotations, batch_size=4, shuffle=True)
 
         # compare SIW-M to RoseYoutu
         from dataset_rose_youtu import Loader, read_annotations as read_annotations_rose_youtu
+
         annotations_rose = read_annotations_rose_youtu('attack')
         annotations_rose['label'] = annotations_rose['label_bin']
         loader_rose = Loader(annotations_rose, batch_size=4, shuffle=True)
@@ -276,107 +340,50 @@ if __name__ == '__main__':
                 plt.savefig(os.path.join(bbox_dir, name))
                 plt.close()
 
-
         ''' Plot sample images '''
         # done elsewhere
+        if False:
+            ''' Crop out faces inside bounding box '''
+            target_dir = '/mnt/sdb1/dp/siw_m_dataset/cropped'
+            os.makedirs(target_dir)
 
-        ''' Crop out faces inside bounding box '''
-        target_dir = '/mnt/sdb1/dp/siw_m_dataset/cropped'
-        os.makedirs(target_dir)
-
-        # find last generated image
-        for i, r in annotations.iterrows():
-            if i % 1000 == 0:
-                print(f'{i}/{len(annotations)}')
-            filename = os.path.basename(r['path'])
-            target_path = os.path.join(target_dir, filename)
-            if not os.path.exists(target_path):
-                print(f'missing: {i} {target_path}')
-                break
-
-        idx_failed = []
-        for i, t in enumerate(annotations.iterrows()):
-            if i < 8528:
-                continue
-            try:
-                j, r = t
-                bbox = r['bbox']
-                path = r['path']
-                filename = os.path.basename(path)
-                # load image
-                image = Image.open(path)
-                # crop just face + some margin
-                x1, y1, dx, dy = bbox
-                x2, y2 = x1 + dx, y1 + dy
-                margin = 0.1
-                x1, y1, x2, y2 = x1 - margin * dx, y1 - margin * dy, x2 + margin * dx, y2 + margin * dy
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                image = image.crop((x1, y1, x2, y2))
-
-                # resize image to 256x256
-                image = image.resize((256, 256))
-
-                # save cropped face
-                image.save(os.path.join(target_dir, filename))
-                if (i % 1000) == 0:
+            # find last generated image
+            for i, r in annotations.iterrows():
+                if i % 1000 == 0:
                     print(f'{i}/{len(annotations)}')
+                filename = os.path.basename(r['path'])
+                target_path = os.path.join(target_dir, filename)
+                if not os.path.exists(target_path):
+                    print(f'missing: {i} {target_path}')
+                    break
 
-            except Exception as e:
-                print(e)
-                idx_failed.append(i)
+            idx_failed = []
+            for i, t in enumerate(annotations.iterrows()):
+                if i < 8528:
+                    continue
+                try:
+                    j, r = t
+                    bbox = r['bbox']
+                    path = r['path']
+                    filename = os.path.basename(path)
+                    # load image
+                    image = Image.open(path)
+                    # crop just face + some margin
+                    x1, y1, dx, dy = bbox
+                    x2, y2 = x1 + dx, y1 + dy
+                    margin = 0.1
+                    x1, y1, x2, y2 = x1 - margin * dx, y1 - margin * dy, x2 + margin * dx, y2 + margin * dy
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    image = image.crop((x1, y1, x2, y2))
 
-def remove_missing_bbox(annotations):
-    """
-    Remove annotations with missing bounding box
+                    # resize image to 256x256
+                    image = image.resize((256, 256))
 
-    bbox is stored as a string in the format [x1, y1, dx, dy]
-    missing values have a NaN float value
+                    # save cropped face
+                    image.save(os.path.join(target_dir, filename))
+                    if (i % 1000) == 0:
+                        print(f'{i}/{len(annotations)}')
 
-    :param annotations:
-    :return:
-    """
-
-    # list all unique types of bbox
-    bbox_types = annotations['bbox'].apply(lambda x: type(x))
-
-    # no bbox detected
-    from copy import deepcopy
-    idx_float = bbox_types[bbox_types != str].index
-    no_bbox_samples = deepcopy(annotations.iloc[idx_float])
-    # save no_bbox_samples to csv
-    no_bbox_samples.to_csv('no_bbox_samples.csv')
-
-    # plot spoof_info distribution for no_bbox_samples
-    if False:
-        value_counts = no_bbox_samples['spoof_info'].value_counts()
-        print(value_counts)
-        value_counts.plot.bar()
-        plt.tight_layout()
-        plt.show()
-
-    # copy images with no bbox to a new folder
-    if False:
-        import os
-        import shutil
-        target_dir = '/mnt/sdb1/dp/siw_m_dataset/no_bbox_samples'
-        os.makedirs(target_dir)
-        for i, r in no_bbox_samples.iterrows():
-            shutil.copy(r['path'], target_dir)
-
-    # plot samples without bbox
-    if False:
-        it = annotations.iloc[idx_float].iterrows()
-        for i, t in enumerate(it):
-            j, r = t
-            image = Image.open(r['path'])
-            plt.imshow(image)
-            plt.show()
-            print(f'{i}/{len(idx_float)}: {j} {r["spoof_info"]}')
-            input()
-            plt.close()
-
-    # remove indexes with no bbox
-    if False:
-        annotations = annotations.drop(axis=0, index=idx_float)
-
-        annotations.to_csv('mnt/sdb1/dp/siw_m_dataset/annotations_ready.csv')
+                except Exception as e:
+                    print(e)
+                    idx_failed.append(i)

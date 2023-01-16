@@ -130,7 +130,7 @@ if __name__ == '__main__':
         class_train = class_val = class_test = 'all'
 
     elif training_mode == 'one_attack':
-        ''' Train on one attack type, test on another '''
+        ''' Train and test on one attack type '''
 
         # train on all persons, test on one unseen person
 
@@ -139,7 +139,7 @@ if __name__ == '__main__':
         # attack-splitting
         if args.attack_test == -1:
             # random
-            class_train, class_val, class_test = np.random.choice(attack_nums, size=3, replace=False)
+            class_train = class_val = class_test = np.random.choice(attack_nums, size=1, replace=False)
         else:
             # specific attack
             class_train = args.attack_train

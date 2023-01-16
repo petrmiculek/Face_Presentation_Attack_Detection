@@ -38,7 +38,7 @@ pil_logger.setLevel(logging.INFO)
 # local
 import config
 from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, keys_append, save_dict_json
+from util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
 from model_util import EarlyStopping
 import resnet18
 from dataset_base import pick_dataset_version, load_dataset
@@ -46,7 +46,8 @@ from dataset_base import pick_dataset_version, load_dataset
 """
 todo:
 prio:
-- 
+- check one-attack splitting in dataset_split
+- regenerate one-attack datasets, with new attack splitting 
 
 normal:
 - training: one_attack, unseen_attack
@@ -104,7 +105,7 @@ parser.add_argument('-l', '--lr', help='learning rate', type=float, default=conf
 # parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
-                    default='one_attack')
+                    default='all_attacks')
 parser.add_argument('-d', '--dataset', help='dataset to train on ', type=str, default='rose_youtu')
 
 # print('main is not being run')  # uncomment this when using def main...
@@ -257,6 +258,8 @@ if __name__ == '__main__':
     print_dict(config_dump)
     print_dict(args_dict)
 
+    print(count_parameters(model))
+
     ''' Training '''
     # run training
     best_loss_val = np.inf
@@ -275,8 +278,8 @@ if __name__ == '__main__':
             with tqdm(train_loader, leave=False, mininterval=1.) as progress_bar:
                 for img, label in progress_bar:
                     # prediction
-                    img = img.to(device, non_blocking=True)  # , dtype=torch.float
-                    label = label.to(device, non_blocking=True)  # , dtype=torch.float / torch.LongTensor
+                    img = img.to(device, non_blocking=True)
+                    label = label.to(device, non_blocking=True)
 
                     img_batch = preprocess(img)
                     out = model(img_batch)

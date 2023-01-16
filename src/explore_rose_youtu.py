@@ -38,6 +38,10 @@ def plot_category_counts_all_ids(paths_all):
 
 
 def plot_example_images(paths_all):
+    sns.set_style('whitegrid')
+    sns.set_context('paper', font_scale=2)
+    sns.set_palette('colorblind')  # does nothing
+    fig, axs = plt.subplots(2, 4, figsize=(14, 9))
     for i, label_num in enumerate(labels.values()):
         # get first image for each label
         try:
@@ -51,8 +55,16 @@ def plot_example_images(paths_all):
         plt.imshow(img)
         plt.title(label_num)
         plt.axis('off')
-    plt.suptitle('Example images', fontsize=16)
+
+    fig.suptitle('RoseYoutu Example Images', fontsize=32)
     plt.tight_layout()
+
+    # zero padding around figure
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.9, bottom=0.01)
+
+    path = join('images_plots', 'rose_youtu_example_images.pdf')
+    plt.savefig(path, bbox_inches='tight', pad_inches=0)
+
     plt.show()
 
 
@@ -95,29 +107,30 @@ def main():
     ''' Plot example images '''
     plot_example_images(paths_all)
 
-    ''' Plot attack category distribution (paths_all) '''
-    paths_all['label_num'].value_counts().plot.bar()
-    plt.title('Attack Category distribution')
-    plt.xlabel('Attack Category')
-    plt.ylabel('Count')
-    plt.xticks(np.arange(len(cat_names)), cat_names, rotation=45)
-    plt.tight_layout()
-    plt.show()
-
-    ''' Plot categories per person ID, per dataset subset '''
-    for subset in [paths_genuine]:  # '[paths_train, paths_val, paths_test, paths_all]:
-        # get variable name as string
-        subset_name = [k for k, v in locals().items() if v is subset][0]
-
-        df_train = subset[['id0', 'label_num']].groupby('id0').value_counts().unstack(fill_value=0).plot.bar(stacked=True)
-        # name legend by categories_names (not x-axis)
-        df_train.legend(cat_names, loc='center left', bbox_to_anchor=(1, 0.5))
-
-        # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.title(f'Attack Category distribution per person ID ({subset_name})')
-        plt.xlabel('Person ID (id0)')
+    if False:
+        ''' Plot attack category distribution (paths_all) '''
+        paths_all['label_num'].value_counts().plot.bar()
+        plt.title('Attack Category distribution')
+        plt.xlabel('Attack Category')
         plt.ylabel('Count')
+        plt.xticks(np.arange(len(cat_names)), cat_names, rotation=45)
         plt.tight_layout()
         plt.show()
 
+    if False:
+        ''' Plot categories per person ID, per dataset subset '''
+        for subset in [paths_genuine]:  # '[paths_train, paths_val, paths_test, paths_all]:
+            # get variable name as string
+            subset_name = [k for k, v in locals().items() if v is subset][0]
 
+            df_train = subset[['id0', 'label_num']].groupby('id0').value_counts().unstack(fill_value=0).plot.bar(
+                stacked=True)
+            # name legend by categories_names (not x-axis)
+            df_train.legend(cat_names, loc='center left', bbox_to_anchor=(1, 0.5))
+
+            # plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            plt.title(f'Attack Category distribution per person ID ({subset_name})')
+            plt.xlabel('Person ID (id0)')
+            plt.ylabel('Count')
+            plt.tight_layout()
+            plt.show()
