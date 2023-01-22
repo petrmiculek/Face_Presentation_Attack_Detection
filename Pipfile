@@ -15,6 +15,9 @@ numpy = "*"
 matplotlib = "*"
 scipy = "*"
 tqdm = "*"
+grad-cam = "*"
+lime = "*"
+scikit-image = "*"
 
 
 [dev-packages]

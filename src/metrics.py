@@ -54,12 +54,12 @@ def compute_metrics(labels, preds, bona_fide=0):
     if fn + tp == 0:
         apcer = 0
     else:
-        apcer = fn / (fn + tp)
+        apcer = fn / (tp + fn)
 
     ''' Bone-Fide Presentation Classification Error Rate (BPCER) '''
     # == False Acceptance Rate (FAR)
     if tn + fp == 0:
-        bpcer = 0  # specificity
+        bpcer = 0
     else:
         bpcer = fp / (fp + tn)  # false acceptance rate
 

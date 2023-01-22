@@ -106,6 +106,18 @@ def pick_dataset_version(name, mode):
 
 
 def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kwargs):
+    """
+    Load dataset from metadata.
+
+    :param metadata_row: paths to files and metadata
+    :param dataset_module: python module with dataset class (see note)
+    :param limit: limit dataset size (enables shuffling)
+    :param quiet: silent mode
+    :param loader_kwargs: keyword arguments for dataset loader
+    :return: dataset loaders for train, val, test
+
+    :note: dataset_module used so that we don't import individual datasets here -> cycle
+    """
     # name = metadata_row['dataset_name']  # could reimport dataset module here
 
     # load annotations

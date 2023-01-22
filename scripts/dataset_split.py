@@ -44,6 +44,8 @@ Tested on:
 all_attacks     | training OK  |    .       |
 unseen_attack   |       .      |    .       |
 one_attack      |       .      |    .       |
+
+# generation failed for one_attack on metacentrum
 '''
 
 if __name__ == '__main__':
@@ -222,9 +224,10 @@ if __name__ == '__main__':
     ''' Shuffle, limit length '''
     if False:
         # shuffle order - useful when limiting dataset size to keep classes balanced
-        paths_train = paths_train.sample(frac=1).reset_index(drop=True)
-        paths_val = paths_val.sample(frac=1).reset_index(drop=True)
-        paths_test = paths_test.sample(frac=1).reset_index(drop=True)
+        paths_train = paths_train.sample(frac=1, random_state=seed).reset_index(
+            drop=True)  # todo random_state for reproducibility
+        paths_val = paths_val.sample(frac=1, random_state=seed).reset_index(drop=True)
+        paths_test = paths_test.sample(frac=1, random_state=seed).reset_index(drop=True)
 
         # limit size for prototyping
         limit = 640  # -1 for no limit, 3200
@@ -250,6 +253,9 @@ if __name__ == '__main__':
     paths_test.to_csv(save_path_test, index=False)
 
     ''' Save metadata '''
+    if training_mode in ['unseen_attack', 'one_attack']:
+        training_mode += f'_{class_test}'
+
     save_path_metadata = join(config_dir, f'dataset_{dataset.name}_metadata_{training_mode}.json')
     save_dict_json(metadata, save_path_metadata)
 

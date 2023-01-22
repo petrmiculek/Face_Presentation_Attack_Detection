@@ -9,12 +9,12 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from dataset_base import BaseDataset, StandardLoader
-
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 
+
 # local
+from src.dataset_base import BaseDataset, StandardLoader
 # import config
 
 """
@@ -89,8 +89,13 @@ def _read_annotations(path, samples_dir):
     :param samples_dir: data samples root directory
     :return: annotations dataframe
     """
-    with open(path, 'r') as f:
-        contents_list = f.readlines()
+    try:
+        with open(path, 'r') as f:
+            contents_list = f.readlines()
+    except FileNotFoundError:
+        logging.error(f"rose_youtu dataset annotations file not found: {path}")
+        raise
+
     contents_list = [x.strip().split(' ') for x in contents_list]
     samples = []
     count_failed = 0

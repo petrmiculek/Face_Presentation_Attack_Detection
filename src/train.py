@@ -7,12 +7,11 @@ import datetime
 from os.path import join
 from copy import deepcopy
 
-"""
-# fix for local import problems - add all local directories
+# fix for problems with local imports - add all local directories to python path
 import sys
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
-"""
+
 
 # external
 import torch
@@ -114,6 +113,14 @@ if __name__ == '__main__':
 
     ''' Parse arguments '''
     args = parser.parse_args()
+    args_dict = get_dict(args)
+    print_dict(args_dict)
+    for k, v in vars(config).items():
+        # update config with args
+        if k in args_dict:
+            setattr(config, k, args_dict[k])
+        elif k in config.HPARAMS:
+            setattr(config, k, config.HPARAMS[k])
 
     ''' Dataset + Training mode '''
 
@@ -251,7 +258,7 @@ if __name__ == '__main__':
     config_dump = get_dict(config)
     wb.config.update(config_dump)
     # global args_global
-    args_dict = get_dict(args)
+
     wb.config.update(args_dict)
 
     # Print setup
@@ -262,7 +269,7 @@ if __name__ == '__main__':
 
     ''' Training '''
     # run training
-    best_loss_val = np.inf
+    best_accu_val = 0
     best_res = None
 
     epochs_trained = 0
@@ -284,20 +291,20 @@ if __name__ == '__main__':
                     img_batch = preprocess(img)
                     out = model(img_batch)
                     loss = criterion(out, label)
-                    ep_train_loss += loss.item()
+                    ep_train_loss += loss.detach().cpu().numpy()
 
                     # learning step
-                    optimizer.zero_grad()
+                    optimizer.zero_grad()  # set_to_none=True todo try grad zero/None
                     loss.backward()
                     optimizer.step()
 
-                    # compute accuracy
-                    prediction_hard = torch.argmax(out, dim=1)
+                    # compute accuracy  # todo everything here in no_grad?
+                    prediction_hard = torch.argmax(out, dim=1).detach()
                     match = prediction_hard == label
                     progress_bar.set_postfix(loss=f'{loss:.4f}')
 
                     # save predictions
-                    labels_train.append(label.cpu().numpy())
+                    labels_train.append(label.detach().cpu().numpy())
                     preds_train.append(prediction_hard.detach().cpu().numpy())
 
         except KeyboardInterrupt:
@@ -320,7 +327,7 @@ if __name__ == '__main__':
                 img_batch = preprocess(img)
                 out = model(img_batch)
                 loss = criterion(out, label)
-                ep_loss_val += loss.item()
+                ep_loss_val += loss.cpu().numpy()
 
                 # compute accuracy
                 prediction_hard = torch.argmax(out, dim=1)
@@ -346,8 +353,8 @@ if __name__ == '__main__':
         print_dict(res_epoch)
 
         # save best results
-        if ep_loss_val < best_loss_val:
-            best_loss_val = ep_loss_val
+        if metrics_val['Accuracy'] >= best_accu_val:
+            best_accu_val = ep_loss_val
             # save a deepcopy of res to best_res
             best_res = deepcopy(res_epoch)
             best_res['epoch_best'] = epoch
@@ -387,12 +394,12 @@ if __name__ == '__main__':
             img_batch = preprocess(img)
             out = model(img_batch)
             loss = criterion(out, label)
-            total_loss_test += loss.item()
+            total_loss_test += loss.detach().cpu().numpy()
 
             # compute accuracy
             prediction_hard = torch.argmax(out, dim=1)
             match = prediction_hard == label
-            total_correct_test += match.sum().item()
+            total_correct_test += match.sum().detach().cpu().numpy()
 
             # save predictions
             labels_test.append(label.cpu().numpy())

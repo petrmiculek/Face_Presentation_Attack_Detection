@@ -3,7 +3,7 @@ training_run_id = None  # initialized from train.py
 HPARAMS = {
     'epochs': 1,
     'batch_size': 32,
-    'lr': 0.001,
+    'lr': 1e-4,
     'early_stopping_patience': 5,
     'weight_decay': 1e-3,
 

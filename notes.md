@@ -68,6 +68,12 @@ low-prio:
 * union of dicts - is it order-dependent? key collisions
 * running dataset_split.py from the scripts folder will fail to import src.*, handle that in the .sh script
 
+problems:
+
+* dataset_split for one_attack did not work on metacentrum -- 1 class found, 2 expected
+* pipenv might not be available on metacentrum
+*
+
 #############
 trash bin:
 
