@@ -29,7 +29,11 @@ class LogTime:
 
 
 def count_parameters(model):
-    """Count total number of trainable parameters of a torch model. Prints table of its layers."""
+    """
+    Count total number of trainable parameters of a torch model. Prints table of its layers.
+
+    Taken from a previous own project, original source unknown.
+    """
 
     table = PrettyTable(["Modules", "Parameters"])
     params = 0
@@ -43,7 +47,8 @@ def count_parameters(model):
         params += param
 
     print(table)
-    print(f"Params#: {params}")
+    # print number of params in exponential notation
+    print(f"Params#: {params:e.2}")
 
     return params
 

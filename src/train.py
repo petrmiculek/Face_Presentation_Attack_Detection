@@ -18,8 +18,10 @@ sys.path.extend(sys_path_extension)
 
 # external
 import torch
-# from torchvision.models import shufflenet_v2_x1_0
-from torchvision.models import ResNet18_Weights
+from torchvision.models import shufflenet_v2_x1_0
+from torchvision.models import efficientnet_v2_s
+from torchvision.models import EfficientNet_V2_S_Weights
+from torchvision.models import ResNet18_Weights  # architecture loaded locally to allow changes
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -194,8 +196,12 @@ if __name__ == '__main__':
 
     ''' Model '''
     if True:
-        weights = ResNet18_Weights.IMAGENET1K_V1
-        model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+
+        # weights = ResNet18_Weights.IMAGENET1K_V1
+        # model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+
+        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
+        model = efficientnet_v2_s(weights=weights, weight_class=EfficientNet_V2_S_Weights)
 
         preprocess = weights.transforms()
 
@@ -224,6 +230,7 @@ if __name__ == '__main__':
                                                                verbose=True)
         early_stopping = EarlyStopping(patience=config.HPARAMS['early_stopping_patience'],
                                        verbose=True, path=checkpoint_path)
+        scaler = GradScaler()  # mixed precision training
 
     ''' Dataset '''
     if True:
@@ -266,8 +273,7 @@ if __name__ == '__main__':
 
     # Print setup
     print_dict(config_dump, 'Config')
-
-    print(count_parameters(model))
+    count_parameters(model)
 
     ''' Training '''
     # run training
@@ -275,7 +281,6 @@ if __name__ == '__main__':
     best_res = None
 
     epochs_trained = 0
-    scaler = GradScaler()
 
     for epoch in range(epochs_trained, epochs_trained + args.epochs):
         print(f'Epoch {epoch}')
@@ -361,7 +366,7 @@ if __name__ == '__main__':
 
         # save best results
         if metrics_val['Accuracy'] >= best_accu_val:
-            best_accu_val = ep_loss_val
+            best_accu_val = metrics_val['Accuracy']
             # save a deepcopy of res to best_res
             best_res = deepcopy(res_epoch)
             best_res['epoch_best'] = epoch
