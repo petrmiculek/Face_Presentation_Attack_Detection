@@ -20,6 +20,7 @@ import torch
 from torch.nn.functional import softmax
 # from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import ResNet18_Weights
+from torchvision.models import EfficientNet_V2_S_Weights, efficientnet_v2_s
 
 import numpy as np
 from tqdm import tqdm
@@ -140,10 +141,22 @@ if __name__ == '__main__':
     print(f"Device name: {torch.cuda.get_device_name(0)}")
 
     ''' Load Model '''
-    weights = ResNet18_Weights.IMAGENET1K_V1
-    model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
-    model.fc = torch.nn.Linear(512, config_dict['num_classes'], bias=True)
-    preprocess = weights.transforms()
+    model_name = config_dict['model_name']
+    # def load_model(model_name, weights, weight_class, num_classes): ...
+    if model_name == 'resnet18':
+        weights = ResNet18_Weights.IMAGENET1K_V1
+        model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+        model.fc = torch.nn.Linear(512, config_dict['num_classes'], bias=True)
+        preprocess = weights.transforms()
+    elif model_name == 'efficientnet_v2_s':
+        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
+        model = efficientnet_v2_s(weights=weights,
+                                  weight_class=EfficientNet_V2_S_Weights)  # todo possibly set num_classes=2
+        model_name = efficientnet_v2_s.__name__
+        preprocess = weights.transforms()
+    else:
+        raise ValueError(f'Unknown model name {model_name}')
+
     model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt')))
     model.to(device)
     model.eval()
@@ -186,11 +199,13 @@ if __name__ == '__main__':
         print_dict(res_test)
 
     ''' Explainability '''
-    from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
-    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-    from pytorch_grad_cam.utils.image import show_cam_on_image
 
-    if True:
+    if False:
+        from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
+            FullGrad
+        from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+        from pytorch_grad_cam.utils.image import show_cam_on_image
+
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
 
@@ -200,6 +215,8 @@ if __name__ == '__main__':
         preds_raw = model.forward(imgs.to(device))
         preds = softmax(preds_raw, dim=1).cpu().detach().numpy()
 
+        # for i, _ in enumerate(imgs):
+        i = 0
         # attempt to get a correct prediction
         while preds[i].argmax() != labels[i]:
             try:
@@ -210,8 +227,6 @@ if __name__ == '__main__':
             except Exception as e:
                 print(e)
 
-        # for i, _ in enumerate(imgs):
-        i = 0
         # img, label = imgs[i:i + 1], labels[i:i + 1]  # img 4D, label 1D
         label_scalar = label[0].item()  # label 0D
         img_np = img[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
@@ -299,4 +314,288 @@ if __name__ == '__main__':
         fig.savefig(path, bbox_inches='tight', pad_inches=0)
         plt.show()
 
-        # labels names and order might be mixed up.
+    ''' LIME '''
+    if False:
+        import lime
+        from lime import lime_image
+        from lime.wrappers.scikit_image import SegmentationAlgorithm
+        from skimage.segmentation import mark_boundaries
+
+        # how to install skimage
+
+        #
+        imgs, labels = next(iter(train_loader))
+        preds_raw = model.forward(imgs.to(device))
+        preds = softmax(preds_raw, dim=1).cpu().detach().numpy()
+        i = 0
+        img = imgs[i:i + 1]
+        label = labels[i:i + 1]
+        pred = preds[i]
+        label_scalar = label[0].item()  # label 0D
+        img_np = img[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+
+        import matplotlib.pyplot as plt
+        from PIL import Image
+        import torch.nn as nn
+        import numpy as np
+        import os
+        import json
+
+        import torch
+        from torchvision import models, transforms
+        from torch.autograd import Variable
+        import torch.nn.functional as F
+
+
+        def get_pil_transform():
+            transf = transforms.Compose([
+                transforms.Resize((256, 256)),
+                transforms.CenterCrop(224)
+            ])
+
+            return transf
+
+
+        def get_preprocess_transform():
+            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                             std=[0.229, 0.224, 0.225])
+            transf = transforms.Compose([
+                transforms.ToTensor(),
+                normalize
+            ])
+
+            return transf
+
+
+        def batch_predict(images):
+            model.eval()
+            print(f'{images.shape=}')
+            batch = torch.stack(tuple(preprocess_transform(i) for i in images), dim=0)
+            print(f'{batch=}')
+
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model.to(device)
+            batch = batch.to(device)
+
+            logits = model(batch)
+            probs = F.softmax(logits, dim=1)
+            return probs.cpu().numpy()
+
+
+        pill_transf = get_pil_transform()
+        preprocess_transform = get_preprocess_transform()
+
+        explainer = lime_image.LimeImageExplainer()
+
+        img_for_explainer = np.array(pill_transf(img[0]))
+        img_t = img_for_explainer.transpose(2, 0, 1)
+
+        """
+        Start here: 
+        
+        - LIME did not work:    input image must be C, W, H in the pill_transf,
+                                but the explain_instance expects channels_last
+                                .
+        Two options:                            
+        1) Just run the origal .ipynb
+        
+        2) DIY                        
+        error in rgb2xyz
+        arr = _prepare_colorarray(rgb, channel_axis=-1).copy()
+        ValueError: the input array must have size 3 along `channel_axis`, got (3, 224, 224)
+    
+        - try debugging to see what is the dimension of the image at the time of the call
+        - call again with a different image channel order
+        
+        """
+        explanation = explainer.explain_instance(img_t,
+                                                 batch_predict,  # classification function
+                                                 top_labels=5,
+                                                 hide_color=0,
+                                                 num_samples=1000)
+
+        temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=5,
+                                                    hide_rest=False)
+        img_boundry1 = mark_boundaries(temp / 255.0, mask)
+        plt.imshow(img_boundry1)
+
+        temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=False, num_features=10,
+                                                    hide_rest=False)
+        img_boundry2 = mark_boundaries(temp / 255.0, mask)
+        plt.imshow(img_boundry2)
+
+        ''' Playing with lime code to debug '''
+        if False:
+            from skimage.color import gray2rgb
+            # sklearn
+            import sklearn
+
+
+            class ImageExplanation(object):
+                def __init__(self, image, segments):
+                    """Init function.
+
+                    Args:
+                        image: 3d numpy array
+                        segments: 2d numpy array, with the output from skimage.segmentation
+                    """
+                    self.image = image
+                    self.segments = segments
+                    self.intercept = {}
+                    self.local_exp = {}
+                    self.local_pred = {}
+                    self.score = {}
+
+                def explain_instance(self, image, classifier_fn, labels=(1,),
+                                     hide_color=None,
+                                     top_labels=5, num_features=100000, num_samples=1000,
+                                     batch_size=10,
+                                     segmentation_fn=None,
+                                     distance_metric='cosine',
+                                     model_regressor=None,
+                                     random_seed=None,
+                                     progress_bar=True):
+                    """Generates explanations for a prediction.
+
+                    First, we generate neighborhood data by randomly perturbing features
+                    from the instance (see __data_inverse). We then learn locally weighted
+                    linear models on this neighborhood data to explain each of the classes
+                    in an interpretable way (see lime_base.py).
+
+                    Args:
+                        image: 3 dimension RGB image. If this is only two dimensional,
+                            we will assume it's a grayscale image and call gray2rgb.
+                        classifier_fn: classifier prediction probability function, which
+                            takes a numpy array and outputs prediction probabilities.  For
+                            ScikitClassifiers , this is classifier.predict_proba.
+                        labels: iterable with labels to be explained.
+                        hide_color: If not None, will hide superpixels with this color.
+                            Otherwise, use the mean pixel color of the image.
+                        top_labels: if not None, ignore labels and produce explanations for
+                            the K labels with highest prediction probabilities, where K is
+                            this parameter.
+                        num_features: maximum number of features present in explanation
+                        num_samples: size of the neighborhood to learn the linear model
+                        batch_size: batch size for model predictions
+                        distance_metric: the distance metric to use for weights.
+                        model_regressor: sklearn regressor to use in explanation. Defaults
+                        to Ridge regression in LimeBase. Must have model_regressor.coef_
+                        and 'sample_weight' as a parameter to model_regressor.fit()
+                        segmentation_fn: SegmentationAlgorithm, wrapped skimage
+                        segmentation function
+                        random_seed: integer used as random seed for the segmentation
+                            algorithm. If None, a random integer, between 0 and 1000,
+                            will be generated using the internal random number generator.
+                        progress_bar: if True, show tqdm progress bar.
+
+                    Returns:
+                        An ImageExplanation object (see lime_image.py) with the corresponding
+                        explanations.
+                    """
+                    if len(image.shape) == 2:
+                        image = gray2rgb(image)
+                    if random_seed is None:
+                        random_seed = self.random_state.randint(0, high=1000)
+
+                    if segmentation_fn is None:
+                        segmentation_fn = SegmentationAlgorithm('quickshift', kernel_size=4,
+                                                                max_dist=200, ratio=0.2,
+                                                                random_seed=random_seed)
+                    segments = segmentation_fn(image)
+
+                    fudged_image = image.copy()
+                    if hide_color is None:
+                        for x in np.unique(segments):
+                            fudged_image[segments == x] = (
+                                np.mean(image[segments == x][:, 0]),
+                                np.mean(image[segments == x][:, 1]),
+                                np.mean(image[segments == x][:, 2]))
+                    else:
+                        fudged_image[:] = hide_color
+
+                    top = labels
+
+                    data, labels = self.data_labels(image, fudged_image, segments,
+                                                    classifier_fn, num_samples,
+                                                    batch_size=batch_size,
+                                                    progress_bar=progress_bar)
+
+                    distances = sklearn.metrics.pairwise_distances(
+                        data,
+                        data[0].reshape(1, -1),
+                        metric=distance_metric
+                    ).ravel()
+
+
+            def get_image_and_mask(self, label, positive_only=True, negative_only=False, hide_rest=False,
+                                   num_features=5, min_weight=0.):
+                """Init function.
+
+                Args:
+                    label: label to explain
+                    positive_only: if True, only take superpixels that positively contribute to
+                        the prediction of the label.
+                    negative_only: if True, only take superpixels that negatively contribute to
+                        the prediction of the label. If false, and so is positive_only, then both
+                        negativey and positively contributions will be taken.
+                        Both can't be True at the same time
+                    hide_rest: if True, make the non-explanation part of the return
+                        image gray
+                    num_features: number of superpixels to include in explanation
+                    min_weight: minimum weight of the superpixels to include in explanation
+
+                Returns:
+                    (image, mask), where image is a 3d numpy array and mask is a 2d
+                    numpy array that can be used with
+                    skimage.segmentation.mark_boundaries
+                """
+                if label not in self.local_exp:
+                    raise KeyError('Label not in explanation')
+                if positive_only & negative_only:
+                    raise ValueError("Positive_only and negative_only cannot be true at the same time.")
+                segments = self.segments
+                image = self.image
+                exp = self.local_exp[label]
+                mask = np.zeros(segments.shape, segments.dtype)
+                if hide_rest:
+                    temp = np.zeros(self.image.shape)
+                else:
+                    temp = self.image.copy()
+                if positive_only:
+                    fs = [x[0] for x in exp
+                          if x[1] > 0 and x[1] > min_weight][:num_features]
+                if negative_only:
+                    fs = [x[0] for x in exp
+                          if x[1] < 0 and abs(x[1]) > min_weight][:num_features]
+                if positive_only or negative_only:
+                    for f in fs:
+                        temp[segments == f] = image[segments == f].copy()
+                        mask[segments == f] = 1
+                    return temp, mask
+                else:
+                    for f, w in exp[:num_features]:
+                        if np.abs(w) < min_weight:
+                            continue
+                        c = 0 if w < 0 else 1
+                        mask[segments == f] = -1 if w < 0 else 1
+                        temp[segments == f] = image[segments == f].copy()
+                        temp[segments == f, c] = np.max(image)
+                    return temp, mask
+
+                ret_exp = ImageExplanation(image, segments)
+                if top_labels:
+                    top = np.argsort(labels[0])[-top_labels:]
+                    ret_exp.top_labels = list(top)
+                    ret_exp.top_labels.reverse()
+                for label in top:
+                    (ret_exp.intercept[label],
+                     ret_exp.local_exp[label],
+                     ret_exp.score[label],
+                     ret_exp.local_pred[label]) = self.base.explain_instance_with_data(
+                        data, labels, distances, label, num_features,
+                        model_regressor=model_regressor,
+                        feature_selection=self.feature_selection)
+
+                return ret_exp
+
+        ''' ... '''

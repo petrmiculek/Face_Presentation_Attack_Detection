@@ -21,7 +21,8 @@ import torch
 from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import efficientnet_v2_s
 from torchvision.models import EfficientNet_V2_S_Weights
-from torchvision.models import ResNet18_Weights  # architecture loaded locally to allow changes
+# from torchvision.models import resnet18  # unused, architecture loaded locally to allow changes
+from torchvision.models import ResNet18_Weights
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -40,12 +41,12 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-import config
-from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
-from model_util import EarlyStopping
-import resnet18
-from dataset_base import pick_dataset_version, load_dataset
+import src.config as config
+from src.metrics import confusion_matrix, compute_metrics  # , accuracy
+from src.util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
+from src.model_util import EarlyStopping
+from src.resnet18 import resnet18
+from src.dataset_base import pick_dataset_version, load_dataset
 
 """
 todo:
@@ -103,14 +104,14 @@ todo what is a good val x test split for one-attack
 
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
+parser.add_argument('-d', '--dataset', help='dataset to train on', type=str, default='rose_youtu')
+parser.add_argument('-a', '--model', help='model name', type=str, default='resnet18')
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
 parser.add_argument('-e', '--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
 parser.add_argument('-l', '--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
-# parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
-parser.add_argument('-d', '--dataset', help='dataset to train on ', type=str, default='rose_youtu')
 
 # print('main is not being run')  # uncomment this when using def main...
 # def main():
@@ -196,17 +197,30 @@ if __name__ == '__main__':
 
     ''' Model '''
     if True:
+        model_name = 'efficientnet_v2_s'
+        if model_name == 'resnet18':
+            # load model with pretrained weights
+            weights = ResNet18_Weights.IMAGENET1K_V1
+            model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+            # replace last layer with n-ary classification head
+            model.fc = torch.nn.Linear(512, num_classes, bias=True)
+            preprocess = weights.transforms()
+        elif model_name == 'efficientnet_v2_s':
+            weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
+            model = efficientnet_v2_s(weights=weights,
+                                      weight_class=EfficientNet_V2_S_Weights)  # todo possibly set num_classes=2
+            from torch import nn
 
-        # weights = ResNet18_Weights.IMAGENET1K_V1
-        # model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
-
-        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
-        model = efficientnet_v2_s(weights=weights, weight_class=EfficientNet_V2_S_Weights)
-
-        preprocess = weights.transforms()
-
-        # replace last layer with n-ary classification head
-        model.fc = torch.nn.Linear(512, num_classes, bias=True)
+            dropout = 0.2  # as per original model code
+            model.classifier = nn.Sequential(
+                nn.Dropout(p=dropout, inplace=True),
+                nn.Linear(1280, num_classes),
+            )
+            # load weights
+            model_name = efficientnet_v2_s.__name__
+            preprocess = weights.transforms()
+        else:
+            raise ValueError(f'Unknown model name {model_name}')
 
         # freeze all previous layers
         print('Note: Currently not freezing any layers')
@@ -263,6 +277,7 @@ if __name__ == '__main__':
          "train_ids": dataset_meta['train_ids'],
          "val_id": dataset_meta['val_id'],
          "test_id": dataset_meta['test_id'],
+         "model_name": model_name,
          })
 
     config_dump = get_dict(config)
@@ -281,7 +296,7 @@ if __name__ == '__main__':
     best_res = None
 
     epochs_trained = 0
-
+    stop_training = False
     for epoch in range(epochs_trained, epochs_trained + args.epochs):
         print(f'Epoch {epoch}')
         model.train()
@@ -321,6 +336,7 @@ if __name__ == '__main__':
 
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')
+            stop_training = True
 
         # compute training metrics
         preds_train = np.concatenate(preds_train)
@@ -379,7 +395,7 @@ if __name__ == '__main__':
 
         # model checkpointing
         early_stopping(ep_loss_val, model, epoch)
-        if early_stopping.early_stop:
+        if early_stopping.early_stop or stop_training:
             print('Early stopping')
             break
 

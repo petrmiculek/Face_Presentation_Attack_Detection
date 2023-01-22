@@ -48,7 +48,7 @@ def count_parameters(model):
 
     print(table)
     # print number of params in exponential notation
-    print(f"Params#: {params:e.2}")
+    print(f"Params#: {params:.3e}")
 
     return params
 

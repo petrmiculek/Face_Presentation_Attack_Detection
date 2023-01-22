@@ -1,5 +1,9 @@
 doing:
 
+* efficient_net training works, but we don't init the model with 8 classes #DONE#
+* check model name saved -> load model in evaluate
+*
+
 ############################## HOT
 
 ############################## HOT
