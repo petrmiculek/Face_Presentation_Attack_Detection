@@ -9,9 +9,12 @@ from copy import deepcopy
 
 # fix for problems with local imports - add all local directories to python path
 import sys
+
+from torch import autocast
+from torch.cuda.amp import GradScaler
+
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
-
 
 # external
 import torch
@@ -51,21 +54,21 @@ prio:
 normal:
 - training: one_attack, unseen_attack
     - log the class chosen for training/val/test  #DONE#
-    - include the class names in the confusion matrix title
+    - include the class names in the confusion matrix title  #DONE#
 
 - extract one-to-last layer embeddings (for t-SNE etc.)
-    - resnet18.py - local model implementation
+    - resnet18.py - local model implementation  #DONE#
 
 - log the plots to wandb
 
 less important:
-- setup for metacentrum
+- setup for metacentrum  #DONE#
 - fix W&B 'failed to sample metrics' error
-- 16bit training
+- 16bit training  #DONE#
 - checkpoint also state of scheduler, optimizer, ...
 
 other:
-- cache function calls (reading annotations?)
+- cache function calls (reading annotations?)  #SKIPPED#
 - 
 
 done:
@@ -114,7 +117,7 @@ if __name__ == '__main__':
     ''' Parse arguments '''
     args = parser.parse_args()
     args_dict = get_dict(args)
-    print_dict(args_dict)
+    print_dict(args_dict, 'Args')
     for k, v in vars(config).items():
         # update config with args
         if k in args_dict:
@@ -228,10 +231,10 @@ if __name__ == '__main__':
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
-
+        limit = -1
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
                          'pin_memory': True}
-        train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=-1,
+        train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
                                                              quiet=False, **loader_kwargs)
 
         len_train_ds = len(train_loader.dataset)
@@ -262,8 +265,7 @@ if __name__ == '__main__':
     wb.config.update(args_dict)
 
     # Print setup
-    print_dict(config_dump)
-    print_dict(args_dict)
+    print_dict(config_dump, 'Config')
 
     print(count_parameters(model))
 
@@ -273,6 +275,7 @@ if __name__ == '__main__':
     best_res = None
 
     epochs_trained = 0
+    scaler = GradScaler()
 
     for epoch in range(epochs_trained, epochs_trained + args.epochs):
         print(f'Epoch {epoch}')
@@ -284,28 +287,32 @@ if __name__ == '__main__':
         try:
             with tqdm(train_loader, leave=False, mininterval=1.) as progress_bar:
                 for img, label in progress_bar:
-                    # prediction
+                    optimizer.zero_grad()  # set_to_none=True todo try grad zero/None
                     img = img.to(device, non_blocking=True)
                     label = label.to(device, non_blocking=True)
 
-                    img_batch = preprocess(img)
-                    out = model(img_batch)
-                    loss = criterion(out, label)
-                    ep_train_loss += loss.detach().cpu().numpy()
+                    # prediction
+                    with autocast(device_type='cuda', dtype=torch.float16):
+                        img_batch = preprocess(img)
+                        out = model(img_batch)
+                        loss = criterion(out, label)
 
-                    # learning step
-                    optimizer.zero_grad()  # set_to_none=True todo try grad zero/None
-                    loss.backward()
-                    optimizer.step()
+                    # backward pass
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
 
-                    # compute accuracy  # todo everything here in no_grad?
-                    prediction_hard = torch.argmax(out, dim=1).detach()
-                    match = prediction_hard == label
-                    progress_bar.set_postfix(loss=f'{loss:.4f}')
+                    with torch.no_grad():
+                        ep_train_loss += loss.cpu().numpy()
 
-                    # save predictions
-                    labels_train.append(label.detach().cpu().numpy())
-                    preds_train.append(prediction_hard.detach().cpu().numpy())
+                        # compute accuracy
+                        prediction_hard = torch.argmax(out, dim=1)
+                        match = prediction_hard == label
+                        progress_bar.set_postfix(loss=f'{loss:.4f}')
+
+                        # save predictions
+                        labels_train.append(label.cpu().numpy())
+                        preds_train.append(prediction_hard.cpu().numpy())
 
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')
@@ -379,8 +386,7 @@ if __name__ == '__main__':
         print('Loaded model checkpoint')
 
     # print best val results
-    print('Best results:')
-    print_dict(best_res)
+    print_dict(best_res, 'Best epoch:')
 
     ''' Test set evaluation '''
     model.eval()
@@ -410,8 +416,8 @@ if __name__ == '__main__':
     metrics_test = compute_metrics(labels_test, preds_test)
 
     ''' Log results '''
-    print(f'\nLoss Test   : {loss_test:.2f}')
-    print(f'Accuracy Test: {metrics_test["Accuracy"]:.2f}')
+    print(f'\nLoss Test  : {loss_test:06.4f}')
+    print(f'Accuracy Test: {metrics_test["Accuracy"]:06.4f}')
     print_dict(metrics_test)
 
     wb.run.summary['loss_test'] = loss_test
@@ -453,5 +459,5 @@ if __name__ == '__main__':
                               output_location=path_cm, show=show_plots)
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}
-    print_dict(union_dict)
+    print_dict(union_dict, 'All info dump')
     save_dict_json(union_dict, path=os.path.join(outputs_dir, 'config.json'))

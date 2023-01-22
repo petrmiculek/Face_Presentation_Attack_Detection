@@ -55,9 +55,9 @@ def get_dict(obj):
             if not key.startswith('_')}
 
 
-def print_dict(dictionary):
+def print_dict(dictionary, title=''):
     """Print dictionary formatted."""
-    print('')  # newline
+    print(title)  # newline
     for k, v in dictionary.items():
         print(f'\t{k:20s}:', end='')
         if isinstance(v, float):
