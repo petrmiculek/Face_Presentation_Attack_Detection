@@ -18,7 +18,7 @@ tqdm = "*"
 grad-cam = "*"
 lime = "*"
 scikit-image = "*"
-
+jupyter = "*"
 
 [dev-packages]
 
