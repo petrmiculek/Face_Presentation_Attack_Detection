@@ -7,21 +7,21 @@ import datetime
 from os.path import join
 from copy import deepcopy
 
-"""
 # fix for local import problems - add all local directories
 import sys
+
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
-"""
 
 # external
-import matplotlib.pyplot as plt
 import torch
 from torch.nn.functional import softmax
 # from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import ResNet18_Weights
 from torchvision.models import EfficientNet_V2_S_Weights, efficientnet_v2_s
 
+from sklearn.metrics import classification_report
+import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -30,6 +30,18 @@ import seaborn as sns
 os.environ["WANDB_SILENT"] = "true"
 
 import wandb as wb
+
+from PIL import Image
+import numpy as np
+import os
+import json
+
+import torch
+from torchvision import models, transforms
+from torch.autograd import Variable
+import torch.nn.functional as F
+import torch.nn as nn
+from lime import lime_image
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
@@ -40,14 +52,18 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
-import dataset_rose_youtu as dataset
+# import dataset_rose_youtu as dataset
 from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, xor, keys_append, save_dict_json
 from model_util import EarlyStopping
 import resnet18
 
+run_dir = ''
 # run_dir = 'runs/2023-01-10_14-41-03'  # 'unseen_attack'
-run_dir = 'runs/2023-01-10_15-12-22'  # 'all_attacks'
+# run_dir = 'runs/2023-01-10_15-12-22'  # 'all_attacks'
+
+# run_dir = 'runs/wandering-breeze-87'  # 'all_attacks', efficientnet_v2_s
+# run_dir = 'runs/astral-paper-14'  # 'all_attacks', efficientnet_v2_s
 
 model = None
 device = None
@@ -68,13 +84,20 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-r', '--run', help='model/dataset/settings to load', type=str, default=None)
 
 
+def save_i(path_save, preds_test):
+    if os.path.exists(path_save):
+        print(f'File {path_save} already exists, skipping saving.')
+    else:
+        np.save(path_save, preds_test)
+
+
 def eval_loop(loader):
     len_loader = len(loader)
     ep_loss = 0.0
     preds = []
     labels = []
     with torch.no_grad():
-        for img, label in tqdm(loader, leave=False, mininterval=1., desc='Eval'):
+        for img, label in tqdm(loader, mininterval=1., desc='Eval'):
             img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
             img_batch = preprocess(img)
             out = model(img_batch)
@@ -99,17 +122,24 @@ def eval_loop(loader):
         'Accuracy': metrics['Accuracy'],
     }
 
+    preds = np.concatenate(preds)
+    labels = np.concatenate(labels)
+
     return res_epoch, preds, labels
 
 
 # def main():
 #     global model, device, preprocess, criterion  # disable when not using def main
 if __name__ == '__main__':
+    print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     args = parser.parse_args()
     run_dir = args.run
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
+
+    output_dir = join(run_dir, 'eval')
+    os.makedirs(output_dir, exist_ok=True)
 
     print('Loading model and setup from:', run_dir)
 
@@ -143,23 +173,30 @@ if __name__ == '__main__':
     ''' Load Model '''
     model_name = config_dict['model_name']
     # def load_model(model_name, weights, weight_class, num_classes): ...
+
     if model_name == 'resnet18':
+        # load model with pretrained weights
         weights = ResNet18_Weights.IMAGENET1K_V1
         model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
+        # replace last layer with n-ary classification head
         model.fc = torch.nn.Linear(512, config_dict['num_classes'], bias=True)
         preprocess = weights.transforms()
     elif model_name == 'efficientnet_v2_s':
         weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
-        model = efficientnet_v2_s(weights=weights,
-                                  weight_class=EfficientNet_V2_S_Weights)  # todo possibly set num_classes=2
-        model_name = efficientnet_v2_s.__name__
+        model = efficientnet_v2_s(num_classes=config_dict['num_classes'])
         preprocess = weights.transforms()
     else:
         raise ValueError(f'Unknown model name {model_name}')
 
-    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt')))
+    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt')), strict=False)
     model.to(device)
     model.eval()
+
+    # sample model prediction
+    out = model(torch.rand(1, 3, 224, 224).to(device)).shape
+    # assert shape is (1, num_classes)
+    assert out == (1, config_dict['num_classes']), f'Model output shape is {out}'
+
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
 
     ''' Load Data '''
@@ -171,8 +208,11 @@ if __name__ == '__main__':
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
 
-        loader_kwargs = {'shuffle': True, 'batch_size': config_dict['batch_size'],
-                         'num_workers': config_dict['num_workers'], 'pin_memory': True}
+        batch_size = 2  # 4 # 16  # 32  # config_dict['batch_size']  # depends on model and GPU memory
+        num_workers = 4  # config_dict['num_workers']
+
+        loader_kwargs = {'shuffle': True, 'batch_size': batch_size,
+                         'num_workers': num_workers, 'pin_memory': True}
         train_loader, val_loader, test_loader = \
             load_dataset(dataset_meta, dataset_module, limit=-1, quiet=False, **loader_kwargs)
 
@@ -184,8 +224,11 @@ if __name__ == '__main__':
         len_val_loader = len(val_loader)
         len_test_loader = len(test_loader)
 
+        bona_fide = dataset_module.bona_fide
+        label_names = dataset_module.label_names
+
+    ''' Evaluation '''
     if False:
-        ''' Evaluation '''
         print('Training set')
         res_train, preds_train, labels_train = eval_loop(train_loader)
         print_dict(res_train)
@@ -194,198 +237,180 @@ if __name__ == '__main__':
         res_val, preds_val, labels_val = eval_loop(val_loader)
         print_dict(res_val)
 
-        print('Test set')
-        res_test, preds_test, labels_test = eval_loop(test_loader)
-        print_dict(res_test)
+        if True:
+            print('Test set')
+            res_test, preds_test, labels_test = eval_loop(test_loader)
+            print_dict(res_test)
+            # save predictions to file
+            path_save = join(output_dir, 'preds_test.npy')
+            save_i(path_save, preds_test)
+            save_i(join(output_dir, 'labels_test.npy'), labels_test)
+        else:
+            # load predictions from file
+            preds_test = np.load(join(output_dir, 'preds_test.npy'))
+            labels_test = np.load(join(output_dir, 'labels_test.npy'))
 
-    ''' Explainability '''
+        metrics_test = compute_metrics(labels_test, preds_test)
+        metrics_test = keys_append(metrics_test, ' Test')
 
-    if False:
-        from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
-            FullGrad
-        from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-        from pytorch_grad_cam.utils.image import show_cam_on_image
+        # labels=dataset_module.label_names
+        mm = classification_report(labels_test, preds_test, output_dict=True)
+        print_dict(mm)
+        print(classification_report(labels_test, preds_test))
+        fill_missing_wb()
 
-        cam_dir = join(run_dir, 'cam')
-        os.makedirs(cam_dir, exist_ok=True)
+        ''' Confusion matrix '''
+        label_names = dataset_module.label_names
+        if True:
+            cm_location = join(output_dir, 'confusion_matrix.pdf')
+            confusion_matrix(labels_test, preds_test, output_location=cm_location, labels=label_names, show=True)
 
-        target_layers = [model.layer4[-1]]
+            cm_binary_location = join(output_dir, 'confusion_matrix_binary.pdf')
+            label_names_binary = ['genuine', 'attack']
+            preds_binary = preds_test != bona_fide
+            labels_binary = labels_test != bona_fide
 
-        imgs, labels = next(iter(train_loader))
-        preds_raw = model.forward(imgs.to(device))
-        preds = softmax(preds_raw, dim=1).cpu().detach().numpy()
+            confusion_matrix(labels_binary, preds_binary, output_location=cm_binary_location, labels=label_names_binary,
+                             show=True)
 
-        # for i, _ in enumerate(imgs):
-        i = 0
-        # attempt to get a correct prediction
-        while preds[i].argmax() != labels[i]:
-            try:
-                i += 1
-                img = imgs[i:i + 1]
-                label = labels[i:i + 1]
-                pred = preds[i]
-            except Exception as e:
-                print(e)
+''' Explainability - GradCAM-like '''
+if False:
+    from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
+        FullGrad
+    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+    from pytorch_grad_cam.utils.image import show_cam_on_image
 
-        # img, label = imgs[i:i + 1], labels[i:i + 1]  # img 4D, label 1D
-        label_scalar = label[0].item()  # label 0D
-        img_np = img[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+    cam_dir = join(run_dir, 'cam')
+    os.makedirs(cam_dir, exist_ok=True)
 
-        methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
-        method_cams_dict = {}
-        for method in tqdm(methods, desc='CAM methods', mininterval=1):
-            method_name = method.__name__
+    target_layers = [model.layer4[-1]]
 
-            grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
+    imgs, labels = next(iter(train_loader))
+    preds_raw = model.forward(imgs.to(device)).cpu()
+    preds = softmax(preds_raw, dim=1).detach().numpy()
 
-            targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
+    # for i, _ in enumerate(imgs):
+    i = 0
+    # attempt to get a correct prediction
+    while preds[i].argmax() != labels[i]:
+        try:
+            i += 1
+            img = imgs[i:i + 1]
+            label = labels[i:i + 1]
+            pred = preds[i]
+        except Exception as e:
+            print(e)
+    print(f'Using image {i} with label {label} and prediction {pred}')
 
-            cams = []
-            overlayed = []
-            for k, t in enumerate(targets):
-                grayscale_cam = grad_cam(input_tensor=img, targets=[t])  # img 4D
+    # img, label = imgs[i:i + 1], labels[i:i + 1]  # img 4D, label 1D
+    label_scalar = label[0].item()  # label 0D
+    img_np = img[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
 
-                # In this example grayscale_cam has only one image in the batch:
-                grayscale_cam = grayscale_cam[0, ...]  # -> 3D
+    methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+    method_cams_dict = {}
+    for method in tqdm(methods, desc='CAM methods', mininterval=1):
+        method_name = method.__name__
 
-                visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
-                cams.append(grayscale_cam)
-                overlayed.append(visualization)
+        grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
 
-            method_cams_dict[method_name] = {'cams': cams, 'overlayed': overlayed}
+        targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
 
-            if False:
-                ''' Plot CAMs '''
-                sns.set_context('poster')
-                fig, axs = plt.subplots(3, 3, figsize=(20, 20))
-                plt.subplot(3, 3, 1)
-                plt.imshow(img_np)
-                plt.title('Original image')
-                plt.axis('off')
+        cams = []
+        overlayed = []
+        for k, t in enumerate(targets):
+            grayscale_cam = grad_cam(input_tensor=img, targets=[t])  # img 4D
 
-                for j, c in enumerate(overlayed):
-                    plt.subplot(3, 3, j + 2)
-                    plt.imshow(c)
-                    label_pred_score = f': {preds[i, j]:.2f}'
-                    matches_label = f' (GT)' if j == label else ''
-                    plt.title(dataset_module.label_names[j] + label_pred_score + matches_label)
-                    plt.axis('off')
-                    # remove margin around image
-                    # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+            # In this example grayscale_cam has only one image in the batch:
+            grayscale_cam = grayscale_cam[0, ...]  # -> 3D
 
-                plt.tight_layout()
-                # plt.show()
+            visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
+            cams.append(grayscale_cam)
+            overlayed.append(visualization)
 
-                # save figure fig to path
-                path = join(cam_dir, f'{method_name}_{dataset_name}_img{i}_gt{label_scalar}.png')
-                fig.savefig(path, bbox_inches='tight', pad_inches=0)
+        method_cams_dict[method_name] = {'cams': cams, 'overlayed': overlayed}
 
-        # end of cam methods loop
-
-        ''' Plot CAMs '''
-        sns.set_context('poster')
-        fig, axs = plt.subplots(3, 3, figsize=(20, 20))
-        plt.subplot(3, 3, 1)
-        plt.imshow(img_np)
-        plt.title(f'Original image')
-        plt.axis('off')
-
-        gt_label_name = dataset.label_names[label_scalar]
-        pred_label_name = dataset.label_names[pred.argmax()]
-
-        j = 0
-        for name, cs in method_cams_dict.items():
-            c = cs['overlayed'][label_scalar]
-            plt.subplot(3, 3, j + 2)
-            plt.imshow(c)
-            label_pred_score = f': {preds[i, j]:.2f}'
-            matches_label = f' (GT)' if j == label_scalar else ''
-            plt.title(name)
+        if False:
+            ''' Plot CAMs '''
+            sns.set_context('poster')
+            fig, axs = plt.subplots(3, 3, figsize=(20, 20))
+            plt.subplot(3, 3, 1)
+            plt.imshow(img_np)
+            plt.title('Original image')
             plt.axis('off')
-            # remove margin around image
-            # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-            j += 1
 
-        plt.suptitle(f'CAM Methods Comparison, "{gt_label_name}" class')
-        plt.tight_layout()
+            for j, c in enumerate(overlayed):
+                plt.subplot(3, 3, j + 2)
+                plt.imshow(c)
+                label_pred_score = f': {preds[i, j]:.2f}'
+                matches_label = f' (GT)' if j == label else ''
+                plt.title(dataset_module.label_names[j] + label_pred_score + matches_label)
+                plt.axis('off')
+                # remove margin around image
+                # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-        # save figure fig to path
-        path = join(cam_dir, f'cam-comparison-gt{label_scalar}-rose_youtu.pdf')
-        fig.savefig(path, bbox_inches='tight', pad_inches=0)
-        plt.show()
+            plt.tight_layout()
+            # plt.show()
 
-    ''' LIME '''
-    if False:
-        import lime
-        from lime import lime_image
-        from lime.wrappers.scikit_image import SegmentationAlgorithm
-        from skimage.segmentation import mark_boundaries
+            # save figure fig to path
+            path = join(cam_dir, f'{method_name}_{dataset_name}_img{i}_gt{label_scalar}.png')
+            fig.savefig(path, bbox_inches='tight', pad_inches=0)
 
-        # how to install skimage
+    # end of cam methods loop
 
-        #
-        imgs, labels = next(iter(train_loader))
-        preds_raw = model.forward(imgs.to(device))
-        preds = softmax(preds_raw, dim=1).cpu().detach().numpy()
-        i = 0
-        img = imgs[i:i + 1]
-        label = labels[i:i + 1]
-        pred = preds[i]
-        label_scalar = label[0].item()  # label 0D
-        img_np = img[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+    ''' Plot CAMs '''
+    sns.set_context('poster')
+    fig, axs = plt.subplots(3, 3, figsize=(20, 20))
+    plt.subplot(3, 3, 1)
+    plt.imshow(img_np)
+    plt.title(f'Original image')
+    plt.axis('off')
 
-        import matplotlib.pyplot as plt
-        from PIL import Image
-        import torch.nn as nn
-        import numpy as np
-        import os
-        import json
+    gt_label_name = dataset_module.label_names[label_scalar]
+    pred_label_name = dataset_module.label_names[pred.argmax()]
 
-        import torch
-        from torchvision import models, transforms
-        from torch.autograd import Variable
-        import torch.nn.functional as F
+    j = 0
+    for name, cs in method_cams_dict.items():
+        c = cs['overlayed'][label_scalar]
+        plt.subplot(3, 3, j + 2)
+        plt.imshow(c)
+        label_pred_score = f': {preds[i, j]:.2f}'
+        matches_label = f' (GT)' if j == label_scalar else ''
+        plt.title(name)
+        plt.axis('off')
+        # remove margin around image
+        # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        j += 1
 
+    plt.suptitle(f'CAM Methods Comparison, "{gt_label_name}" class')
+    plt.tight_layout()
 
-        def get_pil_transform():
-            transf = transforms.Compose([
-                transforms.Resize((256, 256)),
-                transforms.CenterCrop(224)
-            ])
+    # save figure fig to path
+    path = join(cam_dir, f'cam-comparison-gt{label_scalar}-rose_youtu.pdf')
+    fig.savefig(path, bbox_inches='tight', pad_inches=0)
+    plt.show()
 
-            return transf
-
-
-        def get_preprocess_transform():
-            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                             std=[0.229, 0.224, 0.225])
-            transf = transforms.Compose([
-                transforms.ToTensor(),
-                normalize
-            ])
-
-            return transf
+''' LIME '''
+if False:
+    from skimage.segmentation import mark_boundaries
 
 
-        def batch_predict(images):
-            model.eval()
-            print(f'{images.shape=}')
-            batch = torch.stack(tuple(preprocess_transform(i) for i in images), dim=0)
-            print(f'{batch=}')
+    def pred_hwc_np(images):
+        img0 = torch.tensor(images)
+        if len(img0.shape) == 3:
+            img0 = img0.unsqueeze(0)
 
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model.to(device)
-            batch = batch.to(device)
-
-            logits = model(batch)
-            probs = F.softmax(logits, dim=1)
-            return probs.cpu().numpy()
+        img0 = img0.permute(0, 3, 1, 2).float().to(device)
+        # print(img0.shape)
+        logits = model(img0)
+        probs = F.softmax(logits, dim=1)
+        res = probs.detach().cpu().numpy()
+        return res
 
 
         pill_transf = get_pil_transform()
         preprocess_transform = get_preprocess_transform()
 
-        explainer = lime_image.LimeImageExplainer()
+    explainer = lime_image.LimeImageExplainer()
 
         img_for_explainer = np.array(pill_transf(img[0]))
         img_t = img_for_explainer.transpose(2, 0, 1)
