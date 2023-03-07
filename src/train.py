@@ -1,28 +1,26 @@
 # stdlib
 import argparse
+import datetime
 import json
 import logging
 import os
-import datetime
 from os.path import join
 from copy import deepcopy
 
 # fix for problems with local imports - add all local directories to python path
 import sys
 
-from torch import autocast
-from torch.cuda.amp import GradScaler
-
-sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
+sys_path_extension = [os.getcwd()] + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
 
 # external
 import torch
 from torchvision.models import shufflenet_v2_x1_0
-from torchvision.models import efficientnet_v2_s
-from torchvision.models import EfficientNet_V2_S_Weights
+from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
 # from torchvision.models import resnet18  # unused, architecture loaded locally to allow changes
 from torchvision.models import ResNet18_Weights
+from torch import autocast, nn
+from torch.cuda.amp import GradScaler
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -41,71 +39,21 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-import src.config as config
+from src import config
 from src.metrics import confusion_matrix, compute_metrics  # , accuracy
 from src.util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
 from src.model_util import EarlyStopping
 from src.resnet18 import resnet18
 from src.dataset_base import pick_dataset_version, load_dataset
 
-"""
-todo:
-prio:
-- check one-attack splitting in dataset_split
-- regenerate one-attack datasets, with new attack splitting 
-
-normal:
-- training: one_attack, unseen_attack
-    - log the class chosen for training/val/test  #DONE#
-    - include the class names in the confusion matrix title  #DONE#
-
-- extract one-to-last layer embeddings (for t-SNE etc.)
-    - resnet18.py - local model implementation  #DONE#
-
-- log the plots to wandb
-
-less important:
-- setup for metacentrum  #DONE#
-- fix W&B 'failed to sample metrics' error
-- 16bit training  #DONE#
-- checkpoint also state of scheduler, optimizer, ...
-
-other:
-- cache function calls (reading annotations?)  #SKIPPED#
-- 
-
-done:
-- gpu training #DONE#
-- eval metrics  #DONE#
-- validation dataset split  #DONE#
-- W&B  #DONE#
-- confusion matrix  #DONE#
-
-notes:
-
-one_attack training: 
-    - train genuine + one type of attack  #DONE#
-    - binary predictions  #DONE#
-    - shuffling the dataset  #DONE#
-    - mixing genuine and attack data  #DONE#
-    - script: run training on every category separately TODO
-    + possibly include out-of-distribution data for testing?
-
-unseen_attack training:
-    - train genuine + 6/7 categories  #DONE#
-    - test on the last category  #DONE#
-    - script: run for every category as unseen
-
-todo what is a good val x test split for one-attack
-"""
 
 ''' Global variables '''
 # -
-
 ''' Parsing Arguments '''
+# local
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', help='dataset to train on', type=str, default='rose_youtu')
-parser.add_argument('-a', '--model', help='model name', type=str, default='resnet18')
+parser.add_argument('-a', '--model', help='model name', type=str, default='resnet18')  # efficientnet_v2_s
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
 parser.add_argument('-e', '--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
 parser.add_argument('-l', '--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
@@ -113,9 +61,17 @@ parser.add_argument('-w', '--num_workers', help='number of workers', type=int, d
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
 
+# set custom help message
+parser.description = 'Train a model on a dataset'
+
+if __name__ == '__main__' and len(sys.argv) == 1:
+    parser.print_help(sys.stderr)
+    sys.exit(1)
+
 # print('main is not being run')  # uncomment this when using def main...
 # def main():
 if __name__ == '__main__':
+    print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
 
     ''' Parse arguments '''
     args = parser.parse_args()
@@ -140,15 +96,16 @@ if __name__ == '__main__':
 
     # set training mode
     training_mode = args.mode  # 'one_attack' or 'unseen_attack' or 'all_attacks'
+    label_names_binary = ['genuine', 'attack']
     # separate_person_ids = False  # unused: train on one person, test on another
     if training_mode == 'all_attacks':
-        cat_names = dataset_module.label_names
+        label_names = dataset_module.label_names
         num_classes = len(dataset_module.labels)
     elif training_mode == 'one_attack':
-        cat_names = ['genuine', 'attack']
+        label_names = label_names_binary
         num_classes = 2
     elif training_mode == 'unseen_attack':
-        cat_names = ['genuine', 'attack']
+        label_names = label_names_binary
         num_classes = 2
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
@@ -208,9 +165,7 @@ if __name__ == '__main__':
         elif model_name == 'efficientnet_v2_s':
             weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
             model = efficientnet_v2_s(weights=weights,
-                                      weight_class=EfficientNet_V2_S_Weights)  # todo possibly set num_classes=2
-            from torch import nn
-
+                                      weight_class=EfficientNet_V2_S_Weights)
             dropout = 0.2  # as per original model code
             model.classifier = nn.Sequential(
                 nn.Dropout(p=dropout, inplace=True),
@@ -257,6 +212,7 @@ if __name__ == '__main__':
                          'pin_memory': True}
         train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
                                                              quiet=False, **loader_kwargs)
+        bona_fide = dataset_module.bona_fide
 
         len_train_ds = len(train_loader.dataset)
         len_val_ds = len(val_loader.dataset)
@@ -460,24 +416,24 @@ if __name__ == '__main__':
     elif args.mode == 'unseen_attack':
         attack_test_name = dataset_module.label_names[args.attack_test]
         title_suffix = f'Test' \
-                       f'\ntrain: all, ' \
+                       f'\ntrain: all but test, ' \
                        f'test:{attack_test_name}({attack_test})'
     else:  # args.mode == 'all_attacks':
         title_suffix = 'Test' \
                        '\ntrain: all, ' \
                        'test: all'
 
-    path_cm = join(outputs_dir, 'confusion_matrix' + '.pdf')
-    cm = confusion_matrix(labels_test, preds_test, labels=cat_names,
-                          normalize=False, title_suffix=title_suffix,
-                          output_location=path_cm, show=show_plots)
+    cm_path = join(outputs_dir, 'confusion_matrix' + '.pdf')
+    confusion_matrix(labels_test, preds_test, labels=label_names,
+                     normalize=False, title_suffix=title_suffix,
+                     output_location=cm_path, show=show_plots)
 
     # binary confusion matrix
     if args.mode == 'all_attacks':
-        path_cm = join(outputs_dir, 'confusion_matrix_binary' + '.pdf')
-        cm = confusion_matrix(labels_test > 0, preds_test > 0, labels=['genuine', 'attack'],
-                              normalize=False, title_suffix=title_suffix,
-                              output_location=path_cm, show=show_plots)
+        cm_binary_path = join(outputs_dir, 'confusion_matrix_binary' + '.pdf')
+        confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
+                         normalize=False, title_suffix=title_suffix,
+                         output_location=cm_binary_path, show=show_plots)
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}
     print_dict(union_dict, 'All info dump')
