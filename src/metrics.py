@@ -26,7 +26,8 @@ def compute_metrics(labels, preds, bona_fide=0):
     fn = np.sum(np.logical_and(preds == bona_fide, labels != bona_fide))
 
     ''' Accuracy '''
-    accuracy = (tp + tn) / (tp + tn + fp + fn)
+    accuracy_binary = (tp + tn) / (tp + tn + fp + fn)
+    accuracy = np.sum(labels == preds) / (tp + tn + fp + fn)
 
     ''' Precision '''
     if tp + fp == 0:
@@ -72,9 +73,10 @@ def compute_metrics(labels, preds, bona_fide=0):
         '#FP': fp,
         '#FN': fn,
         'Accuracy': accuracy,
+        'AccuracyBinary': accuracy_binary,
         'Precision': precision,
         'Recall': recall,
-        'F1': f1,
+        'F1Binary': f1,
         'APCER': apcer,
         'BPCER': bpcer,
         'ACER': acer,
@@ -98,7 +100,7 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
         plot_kwargs.update({
             'vmin': 0.0,
             'vmax': 1.0,
-            'fmt' : '0.2f',
+            'fmt': '0.2f',
         })
     else:
         normalize = None
@@ -107,10 +109,12 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
     labels_numeric = np.arange(len(labels))
     cm = conf_mat(list(gts), list(predictions_hard), normalize=normalize, labels=labels_numeric)
 
-    # also print the confusion matrix
-    print(title)
-    cm = pd.DataFrame(cm, index=labels, columns=labels)
-    print(cm)
+    if show:
+        # also print the confusion matrix
+        print(title)
+        cm = pd.DataFrame(cm, index=labels, columns=labels)
+        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+            print(cm)
 
     sns.set_context('paper', font_scale=1.0)
     fig_cm = sns.heatmap(
@@ -136,9 +140,7 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
         fig_cm.figure.savefig(output_location,
                               bbox_inches='tight')
 
-    # plt.close(fig_cm.figure)
-
-    return fig_cm
+    plt.close(fig_cm.figure)
 
 
 '''

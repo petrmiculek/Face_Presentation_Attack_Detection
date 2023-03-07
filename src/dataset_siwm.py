@@ -78,6 +78,7 @@ spoof_info_to_attack = {
     'Mask_Trans': 5
 }
 
+bona_fide = 1
 """
 Mapping between the granularity of '_attack' and '_info'
 spoof_attack : spoof_info

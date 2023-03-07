@@ -42,10 +42,12 @@ labels = {
     # 'Ml': 'Mask lower'  # never occurs
 }
 
+
 label_to_nums = dict(zip(labels.keys(), range(len(labels))))
+nums_to_names = dict(zip(range(len(labels)), labels.values()))
 label_names = list(labels.values())
 label_nums = list(label_to_nums.values())
-genuine_num = 0
+genuine_num = bona_fide = 0
 attack_nums = [1, 2, 3, 4, 5, 6, 7]
 # label_attack = list(label_to_nums.values())
 # label_attack.remove(label_genuine)
@@ -213,3 +215,7 @@ if __name__ == '__main__':
 
     imgs, ys = next(iter(genuine_loader))
     print(imgs.shape, ys.shape)
+
+    if False:
+        cm = np.random.randint(0, 1000, (8, 8))
+        pcm = pd.DataFrame(cm, columns=label_names)

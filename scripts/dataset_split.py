@@ -191,6 +191,12 @@ if __name__ == '__main__':
         f'Number of unique classes in dataset does not match number of classes in model\n' \
         f'real: {unique_classes}, expected: {num_classes}'
 
+    training_mode_long = training_mode
+    if training_mode in ['unseen_attack', 'one_attack']:
+        training_mode_long += f'_{class_test}'
+
+    save_path_metadata = join(config_dir, f'dataset_{dataset.name}_metadata_{training_mode_long}.json')
+
     # metadata
     metadata = {
         'dataset_name': dataset.name,
@@ -218,6 +224,7 @@ if __name__ == '__main__':
         'path_train': save_path_train,
         'path_val': save_path_val,
         'path_test': save_path_test,
+        'path_metadata': save_path_metadata,
         'date_created': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
@@ -253,10 +260,6 @@ if __name__ == '__main__':
     paths_test.to_csv(save_path_test, index=False)
 
     ''' Save metadata '''
-    if training_mode in ['unseen_attack', 'one_attack']:
-        training_mode += f'_{class_test}'
-
-    save_path_metadata = join(config_dir, f'dataset_{dataset.name}_metadata_{training_mode}.json')
     save_dict_json(metadata, save_path_metadata)
 
     # make csv out of metadata
