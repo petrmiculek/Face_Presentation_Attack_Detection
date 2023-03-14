@@ -22,6 +22,6 @@ fi
 # -d rose_youtu
 # -m all_attacks
 
-$python src/train.py -a efficientnet_v2_s -l 0.0001 -b $batch_size -e 1 -w $num_workers
+$python src/train.py -a efficientnet_v2_s -l 0.0001 -b $batch_size -e $epochs -w $num_workers
 
 # run from root repo directory

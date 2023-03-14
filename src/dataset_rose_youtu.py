@@ -14,7 +14,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 
 # local
-from src.dataset_base import BaseDataset, StandardLoader
+from dataset_base import BaseDataset, StandardLoader
 # import config
 
 """
@@ -72,7 +72,7 @@ glasses = {
 # ############################################### #
 
 
-data_root_dir = join(os.pardir, 'data', 'client')  # todo provide "pardir" from outside
+data_root_dir = join(os.pardir, 'data', 'client')  # todo dataset rose_youtu provide "pardir" from outside
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')

@@ -15,11 +15,8 @@ sys.path.extend(sys_path_extension)
 
 # external
 import torch
-from torchvision.models import shufflenet_v2_x1_0
-from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
-# from torchvision.models import resnet18  # unused, architecture loaded locally to allow changes
-from torchvision.models import ResNet18_Weights
-from torch import autocast, nn
+
+from torch import autocast
 from torch.cuda.amp import GradScaler
 import numpy as np
 from tqdm import tqdm
@@ -39,12 +36,11 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-from src import config
-from src.metrics import confusion_matrix, compute_metrics  # , accuracy
-from src.util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
-from src.model_util import EarlyStopping
-from src.resnet18 import resnet18
-from src.dataset_base import pick_dataset_version, load_dataset
+import config
+from metrics import confusion_matrix, compute_metrics  # , accuracy
+from util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
+from model_util import EarlyStopping, load_model
+from dataset_base import pick_dataset_version, load_dataset
 
 
 ''' Global variables '''
@@ -64,17 +60,13 @@ parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks
 # set custom help message
 parser.description = 'Train a model on a dataset'
 
-if __name__ == '__main__' and len(sys.argv) == 1:
-    parser.print_help(sys.stderr)
-    sys.exit(1)
-
 # print('main is not being run')  # uncomment this when using def main...
 # def main():
 if __name__ == '__main__':
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
 
     ''' Parse arguments '''
-    args = parser.parse_args()
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     args_dict = get_dict(args)
     print_dict(args_dict, 'Args')
     for k, v in vars(config).items():
@@ -155,27 +147,7 @@ if __name__ == '__main__':
     ''' Model '''
     if True:
         model_name = 'efficientnet_v2_s'
-        if model_name == 'resnet18':
-            # load model with pretrained weights
-            weights = ResNet18_Weights.IMAGENET1K_V1
-            model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
-            # replace last layer with n-ary classification head
-            model.fc = torch.nn.Linear(512, num_classes, bias=True)
-            preprocess = weights.transforms()
-        elif model_name == 'efficientnet_v2_s':
-            weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
-            model = efficientnet_v2_s(weights=weights,
-                                      weight_class=EfficientNet_V2_S_Weights)
-            dropout = 0.2  # as per original model code
-            model.classifier = nn.Sequential(
-                nn.Dropout(p=dropout, inplace=True),
-                nn.Linear(1280, num_classes),
-            )
-            # load weights
-            model_name = efficientnet_v2_s.__name__
-            preprocess = weights.transforms()
-        else:
-            raise ValueError(f'Unknown model name {model_name}')
+        model, preprocess = load_model(model_name, num_classes)
 
         # freeze all previous layers
         print('Note: Currently not freezing any layers')
@@ -243,7 +215,7 @@ if __name__ == '__main__':
     wb.config.update(args_dict)
 
     # Print setup
-    print_dict(config_dump, 'Config')
+    print_dict(config_dump, title='Config:')
     count_parameters(model)
 
     ''' Training '''
@@ -263,14 +235,13 @@ if __name__ == '__main__':
         try:
             with tqdm(train_loader, leave=False, mininterval=1.) as progress_bar:
                 for img, label in progress_bar:
-                    optimizer.zero_grad()  # set_to_none=True todo try grad zero/None
-                    img = img.to(device, non_blocking=True)
+                    optimizer.zero_grad(set_to_none=True)
+                    img = preprocess(img).to(device, non_blocking=True)  # transfer to gpu should happen in autocast
                     label = label.to(device, non_blocking=True)
 
                     # prediction
                     with autocast(device_type='cuda', dtype=torch.float16):
-                        img_batch = preprocess(img)
-                        out = model(img_batch)
+                        out = model(img)
                         loss = criterion(out, label)
 
                     # backward pass
@@ -284,11 +255,12 @@ if __name__ == '__main__':
                         # compute accuracy
                         prediction_hard = torch.argmax(out, dim=1)
                         match = prediction_hard == label
-                        progress_bar.set_postfix(loss=f'{loss:.4f}')
 
                         # save predictions
                         labels_train.append(label.cpu().numpy())
                         preds_train.append(prediction_hard.cpu().numpy())
+
+                    progress_bar.set_postfix(loss=f'{loss:.4f}')
 
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')

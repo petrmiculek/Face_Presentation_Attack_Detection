@@ -1,5 +1,6 @@
 # stdlib
 import argparse
+import logging
 import os
 from os.path import join, isfile
 import datetime
@@ -12,17 +13,19 @@ import pandas as pd
 import sys
 
 sys.path.append('src')
+sys.path.extend([d for d in os.listdir() if os.path.isdir(d)])
 
 # local
 import config
-from dataset_base import BaseDataset, StandardLoader
 import dataset_rose_youtu
 import dataset_siwm
 from util import save_dict_json, xor
+from dataset_base import BaseDataset, StandardLoader
+
 
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
-parser.add_argument('-d', '--dataset', help='dataset in {rose_youtu, siwm}', type=str, default='rose_youtu')
+parser.add_argument('-d', '--dataset', help='dataset in {rose_youtu, siwm}', type=str, required=True)
 # following (3) arguments are for one_attack mode only
 parser.add_argument('-t', '--attack_test', help='attack type to test on (1..7), random by default', type=int,
                     default=-1)
@@ -30,8 +33,11 @@ parser.add_argument('-v', '--attack_val', help='attack type to validate on (1..7
                     default=-1)
 parser.add_argument('-r', '--attack_train', help='attack type to train on (1..7), random by default', type=int,
                     default=-1)
-parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
-                    default='one_attack')
+parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
+
+
+
+
 
 ''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
 '''
@@ -58,7 +64,7 @@ if __name__ == '__main__':
 
     note = ''  # arbitrary extra info: dataset length limit, ...
 
-    args = parser.parse_args()
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     training_mode = args.mode
 
     if args.dataset == 'rose_youtu':
@@ -78,21 +84,23 @@ if __name__ == '__main__':
         assert attack != bona_fide
 
     # paths
-    config_dir = 'config'
+    config_dir = 'dataset_lists'
     os.makedirs(config_dir, exist_ok=True)
+    logging.debug(f'Writing to dir: {config_dir}')
     save_path_train = join(config_dir, f'dataset_{dataset.name}_train_{training_mode}.csv')
     save_path_val = join(config_dir, f'dataset_{dataset.name}_val_{training_mode}.csv')
     save_path_test = join(config_dir, f'dataset_{dataset.name}_test_{training_mode}.csv')
 
     # quit if files already exist
     if isfile(save_path_train) or isfile(save_path_val) or isfile(save_path_test):
-        print('Annotation files already exist, quitting.')
-        print(f'Dataset: {dataset.name}, Training mode: {training_mode}')
-        print(f'Files: {save_path_train}, .. val, .. test')
-        exit()
+        logging.error('Annotation files already exist, quitting.')
+        logging.error(f'Dataset: {dataset.name}, Training mode: {training_mode}')
+        logging.error(f'Files: {save_path_train}, .. val, .. test')
+        raise FileExistsError(f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {training_mode}')
+
     else:  # create new files
-        print('Creating new annotation files.')
-        print(f'Dataset: {dataset.name}, Training mode: {training_mode}')
+        logging.info('Creating new annotation files.')
+        logging.info(f'Dataset: {dataset.name}, Training mode: {training_mode}')
 
     if training_mode == 'all_attacks':
         label_names = dataset.label_names
@@ -184,6 +192,8 @@ if __name__ == '__main__':
         paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
                                & (paths_all['id0'] == test_id)]
         paths_val = paths_test  # note: validation == test
+    else:
+        raise ValueError(f'Unknown training mode: {training_mode}')
 
     ''' Safety check '''
     unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()

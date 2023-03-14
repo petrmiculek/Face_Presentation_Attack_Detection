@@ -1,11 +1,22 @@
 doing:
 
+* compare explanations of two different models
+
+* verify training runs after training loop simplification
+* verify evaluation runs with unified load_model
+
 * lime:
   * just call it #DONE#
+  * generate many
+  *
+* many-run script can create run_x.sh files + finished files
 
 ############################## HOT
 
 ############################## HOT
+
+* pred_hwc_np uses F.softmax - is it correct? Why is it not used in the training? What comes out of the model?
+* It should be easy to make EfficientNet produce its one-to-last layer embeddings.
 
 * rose_youtu has 'Genuine', siw-m has 'Live'
 * siw-m
@@ -40,7 +51,7 @@ less important:
 * checkpoint also state of scheduler, optimizer, ... https://docs.wandb.ai/guides/track/advanced/resuming
   * ^but separately from model weights, to load independently
 * reuse code for eval_loop
-*
+* default parameters for model architecture hide intent
 
 ideas:
 
@@ -69,7 +80,7 @@ done:
 * one file with paths to datasets (=> dataset_xyz.py then knows the structure, but not the root path?)  #DONE#
 * I can generate all \*-cam outputs #DONE#
 * I have 0 control over dataset split for all_attacks - person_ids are random and not saved (now saved)  #DONE#
-* dataset size is being limited to 640 #DONE#
+* dataset size is being limited to 640 (not anymore) #DONE#
 * efficient_net training works, but we don't init the model with 8 classes #DONE#
 
 * setup for metacentrum #DONE#
@@ -141,3 +152,5 @@ one_attack: figure out splitting
 persons w.r.t. attack and genuine
 a) train on person 1, test on person 2
 b) train on all persons, test on one unseen person #CHOSEN#
+
+

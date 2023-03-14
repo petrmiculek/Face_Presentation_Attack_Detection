@@ -22,7 +22,7 @@ from dataset_base import BaseDataset, StandardLoader
 name = 'siwm'
 
 ''' Hardcoded dataset paths '''
-data_root_dir = '/mnt/sdb1/dp/siw_m_dataset'  # todo change
+data_root_dir = '/mnt/sdb1/dp/siw_m_dataset'  # todo change hardcoded path for dataset siwm
 samples_dir = join(data_root_dir, 'images')
 annotations_path = join(data_root_dir, 'table', 'table.csv')
 
@@ -64,7 +64,7 @@ spoof_info_to_attack = {
     'Makeup_Co': 0,
     'Makeup_Im': 0,
     'Makeup_Ob': 0,
-    'Partial_Paperglass': 0,
+    'Partial_Paperglass': 0,  # todo what is this category
     'Live': 1,
     'Paper': 2,
     'Partial_Funnyeye': 3,

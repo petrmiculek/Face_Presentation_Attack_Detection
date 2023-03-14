@@ -48,6 +48,36 @@
 
 import torch
 import numpy as np
+# from torchvision.models import resnet18  # unused, architecture loaded locally to allow changes
+from torchvision.models import ResNet18_Weights
+from torchvision.models import shufflenet_v2_x1_0
+from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
+# local
+from src.resnet18 import resnet18
+
+
+def load_model(model_name, num_classes):
+    if model_name == 'resnet18':
+        # load model with pretrained weights
+        weights = ResNet18_Weights.IMAGENET1K_V1
+        model = resnet18(weights=weights, weight_class=ResNet18_Weights)
+        # replace last layer with n-ary classification head
+        model.fc = torch.nn.Linear(512, num_classes, bias=True)
+        preprocess = weights.transforms()
+    elif model_name == 'efficientnet_v2_s':
+        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
+        model = efficientnet_v2_s(weights=weights,
+                                  weight_class=EfficientNet_V2_S_Weights)
+        dropout = 0.2  # as per original model code
+        model.classifier = torch.nn.Sequential(
+            torch.nn.Dropout(p=dropout, inplace=True),
+            torch.nn.Linear(1280, num_classes),
+        )
+        # load weights
+        preprocess = weights.transforms()
+    else:
+        raise ValueError(f'Unknown model name {model_name}')
+    return model, preprocess
 
 
 class EarlyStopping:

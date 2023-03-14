@@ -41,7 +41,6 @@ from torchvision import models, transforms
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.nn as nn
-from lime import lime_image
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
@@ -132,7 +131,7 @@ def eval_loop(loader):
 #     global model, device, preprocess, criterion  # disable when not using def main
 if __name__ == '__main__':
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
-    args = parser.parse_args()
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     run_dir = args.run
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
@@ -173,20 +172,9 @@ if __name__ == '__main__':
     ''' Load Model '''
     model_name = config_dict['model_name']
     # def load_model(model_name, weights, weight_class, num_classes): ...
+    from src.model_util import load_model
 
-    if model_name == 'resnet18':
-        # load model with pretrained weights
-        weights = ResNet18_Weights.IMAGENET1K_V1
-        model = resnet18.resnet18(weights=weights, weight_class=ResNet18_Weights)
-        # replace last layer with n-ary classification head
-        model.fc = torch.nn.Linear(512, config_dict['num_classes'], bias=True)
-        preprocess = weights.transforms()
-    elif model_name == 'efficientnet_v2_s':
-        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
-        model = efficientnet_v2_s(num_classes=config_dict['num_classes'])
-        preprocess = weights.transforms()
-    else:
-        raise ValueError(f'Unknown model name {model_name}')
+    model, preprocess = load_model(model_name, config_dict['num_classes'])
 
     model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt')), strict=False)
     model.to(device)
@@ -214,7 +202,7 @@ if __name__ == '__main__':
         loader_kwargs = {'shuffle': True, 'batch_size': batch_size,
                          'num_workers': num_workers, 'pin_memory': True}
         train_loader, val_loader, test_loader = \
-            load_dataset(dataset_meta, dataset_module, limit=-1, quiet=False, **loader_kwargs)
+            load_dataset(dataset_meta, dataset_module, limit=200, quiet=False, **loader_kwargs)
 
         len_train_ds = len(train_loader.dataset)
         len_val_ds = len(val_loader.dataset)
@@ -237,12 +225,12 @@ if __name__ == '__main__':
         res_val, preds_val, labels_val = eval_loop(val_loader)
         print_dict(res_val)
 
-        if True:
+        path_save = join(output_dir, 'preds_test.npy')
+        if not os.path.isfile(path_save):
             print('Test set')
             res_test, preds_test, labels_test = eval_loop(test_loader)
             print_dict(res_test)
             # save predictions to file
-            path_save = join(output_dir, 'preds_test.npy')
             save_i(path_save, preds_test)
             save_i(join(output_dir, 'labels_test.npy'), labels_test)
         else:
@@ -253,11 +241,9 @@ if __name__ == '__main__':
         metrics_test = compute_metrics(labels_test, preds_test)
         metrics_test = keys_append(metrics_test, ' Test')
 
-        # labels=dataset_module.label_names
         mm = classification_report(labels_test, preds_test, output_dict=True)
         print_dict(mm)
         print(classification_report(labels_test, preds_test))
-        fill_missing_wb()
 
         ''' Confusion matrix '''
         label_names = dataset_module.label_names
@@ -286,8 +272,10 @@ if False:
     target_layers = [model.layer4[-1]]
 
     imgs, labels = next(iter(train_loader))
-    preds_raw = model.forward(imgs.to(device)).cpu()
-    preds = softmax(preds_raw, dim=1).detach().numpy()
+    with torch.no_grad():
+        preds_raw = model.forward(imgs.to(device)).cpu()
+        preds = softmax(preds_raw, dim=1).numpy()
+        preds_classes = preds.argmax(axis=1)
 
     # for i, _ in enumerate(imgs):
     i = 0
@@ -391,33 +379,44 @@ if False:
 
 ''' LIME '''
 if False:
+    from lime import lime_image
     from skimage.segmentation import mark_boundaries
 
 
+    def convert_for_lime(img):
+        return (img.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+
+
     def pred_hwc_np(images):
+        """
+        Run prediction on an image
+        uses global model and device
+        todo check for batch size > 1
+        :param images: HWC numpy array
+        :return:
+        """
         img0 = torch.tensor(images)
         if len(img0.shape) == 3:
             img0 = img0.unsqueeze(0)
 
         img0 = img0.permute(0, 3, 1, 2).float().to(device)
-        # print(img0.shape)
-        logits = model(img0)
-        probs = F.softmax(logits, dim=1)
-        res = probs.detach().cpu().numpy()
+        with torch.no_grad():
+            logits = model(img0)
+            probs = F.softmax(logits, dim=1)
+            res = probs.cpu().numpy()
         return res
 
 
     explainer = lime_image.LimeImageExplainer()
 
     imgs, labels = next(iter(train_loader))
-    preds_raw = model.forward(imgs.to(device)).cpu()
-    preds = softmax(preds_raw, dim=1).detach().numpy()
-    img_np = imgs[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+    with torch.no_grad():
+        preds_raw = model.forward(imgs.to(device)).cpu()
+        preds = softmax(preds_raw, dim=1).numpy()
+
+    img_for_lime = (imgs[0].cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
     label = labels[0].item()
-
-    img_np_uint8 = (img_np * 255).astype(np.uint8)
-
-    explanation = explainer.explain_instance(img_np_uint8, pred_hwc_np,
+    explanation = explainer.explain_instance(img_for_lime, pred_hwc_np,
                                              top_labels=5, hide_color=0, num_samples=1000)
 
     pred_top1 = explanation.top_labels[0]
@@ -428,21 +427,37 @@ if False:
 
     # positive-only
     temp, mask = explanation.get_image_and_mask(pred_top1, positive_only=True, num_features=5,
-                                                hide_rest=False)
-    img_boundry1 = mark_boundaries(temp / 255.0, mask)
-    plt.imshow(img_boundry1)
+                                                hide_rest=True)
+    img_lime_pos = mark_boundaries(temp / 255.0, mask)
+    plt.imshow(img_lime_pos)
     plt.title(f'LIME explanation (pos), pred: {pred_top1_name}, GT: {label_name}')
     plt.axis('off')
     plt.tight_layout()
     plt.show()
 
     # positive and negative
-    # plt.clf()
     temp, mask = explanation.get_image_and_mask(pred_top1, positive_only=False, num_features=10,
                                                 hide_rest=False)
-    img_boundry2 = mark_boundaries(temp / 255.0, mask)
-    plt.imshow(img_np + img_boundry2)
+    img_lime_posneg = mark_boundaries(temp / 255.0, mask)
+    plt.imshow(img_lime_posneg)
     plt.title(f'LIME explanation (pos+neg), pred: {pred_top1_name}, GT: {label_name}')
     plt.axis('off')
     plt.tight_layout()
     plt.show()
+
+    """ Plot images """
+    n_images = imgs.shape[0]
+    fig, axs = plt.subplots(1, n_images, figsize=(10, 6))
+    for i in range(n_images):
+        label = labels[i].item()
+        label_str = dataset_module.label_names[label]
+        pred_class = preds_classes[i]
+        pred_class_str = dataset_module.label_names[pred_class]
+        img = imgs[i].cpu().numpy().transpose(1, 2, 0)
+        axs[i].imshow(img)
+        axs[i].set_title(f'GT: {label_str}' + f', pred: {pred_class_str}')
+        axs[i].axis('off')
+    plt.tight_layout()
+    plt.show()
+
+    # weird - no GT "Video mac" + pred: "Printed still" is in the confusion matrix
