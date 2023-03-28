@@ -42,6 +42,51 @@ labels = {
     # 'Ml': 'Mask lower'  # never occurs
 }
 
+labels_unified = {
+    'G': 'Genuine',  # bona-fide, no attack, 0
+    'P': 'Printed',
+    'V': 'Video',
+    'M': 'Mask',
+    'O': 'Other'
+}
+
+labels_original_to_unified = {
+    'G': 'G',
+    'Ps': 'P',
+    'Pq': 'P',
+    'Vl': 'V',
+    'Vm': 'V',
+    'Mc': 'M',
+    'Mf': 'M',
+    'Mu': 'M'
+}
+
+labels_to_unified_num = {
+    # 0: 0,
+    'G': 0,
+    # 1: 1,
+    'Ps': 1,
+    # 2: 1,
+    'Pq': 1,
+    # 3: 2,
+    'Vl': 2,
+    # 4: 2,
+    'Vm': 2,
+    # 5: 3,
+    'Mc': 3,
+    # 6: 3,
+    'Mf': 3,
+    # 7: 3
+    'Mu': 3
+}
+
+unified_to_nums = dict(zip(labels_unified.keys(), range(len(labels_unified))))
+nums_to_unified = dict(zip(range(len(labels_unified)), labels_unified.values()))  # to names
+label_names_unified = list(labels_unified.values())
+label_nums_unified = list(unified_to_nums.values())
+genuine_num_unified = bona_fide_unified = 0
+attack_nums_unified = [1, 2, 3, 4]
+num_classes_unified = len(labels_unified)  # 5
 
 label_to_nums = dict(zip(labels.keys(), range(len(labels))))
 nums_to_names = dict(zip(range(len(labels)), labels.values()))
@@ -114,7 +159,8 @@ def _read_annotations(path, samples_dir):
                                 'id0': int(s[1]),
                                 'label_bin': int(s[2]),
                                 'label_dir': label_dir,
-                                'label_num': label_to_nums[label_text],
+                                'label_orig': label_to_nums[label_text],
+                                'label_unif': labels_to_unified_num[label_text],
                                 **info})
             else:
                 count_failed += 1
@@ -199,7 +245,7 @@ def Loader(annotations, **kwargs):
 # def main():
 if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
-    paths_genuine = read_annotations('genuine', 'label_num')
+    paths_genuine = read_annotations('genuine', 'label_unif')
     genuine_ds = Dataset(paths_genuine)
 
     # show first image
@@ -210,7 +256,7 @@ if __name__ == '__main__':
 
     ''' Get Dataset Loaders '''
     genuine_loader = Loader(paths_genuine, batch_size=4)
-    paths_attacks = read_annotations('attack', 'label_num')
+    paths_attacks = read_annotations('attack', 'label_unif')
     attack_loader = Loader(paths_attacks, batch_size=4)
 
     imgs, ys = next(iter(genuine_loader))

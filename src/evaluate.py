@@ -15,10 +15,6 @@ sys.path.extend(sys_path_extension)
 
 # external
 import torch
-from torch.nn.functional import softmax
-# from torchvision.models import shufflenet_v2_x1_0
-from torchvision.models import ResNet18_Weights
-from torchvision.models import EfficientNet_V2_S_Weights, efficientnet_v2_s
 
 from sklearn.metrics import classification_report
 import matplotlib.pyplot as plt
@@ -37,10 +33,7 @@ import os
 import json
 
 import torch
-from torchvision import models, transforms
-from torch.autograd import Variable
 import torch.nn.functional as F
-import torch.nn as nn
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
@@ -54,7 +47,6 @@ import config
 # import dataset_rose_youtu as dataset
 from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, xor, keys_append, save_dict_json
-from model_util import EarlyStopping
 import resnet18
 
 run_dir = ''
@@ -73,7 +65,7 @@ criterion = None
 # -
 
 ''' Parsing Arguments '''
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, run explanation methods'
 # parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=None)
 # parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
 # parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
@@ -96,7 +88,8 @@ def eval_loop(loader):
     preds = []
     labels = []
     with torch.no_grad():
-        for img, label in tqdm(loader, mininterval=1., desc='Eval'):
+        for sample in tqdm(loader, mininterval=1., desc='Eval'):
+            img, label = sample['image'], sample['label']
             img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
             img_batch = preprocess(img)
             out = model(img_batch)
@@ -199,10 +192,12 @@ if __name__ == '__main__':
         batch_size = 2  # 4 # 16  # 32  # config_dict['batch_size']  # depends on model and GPU memory
         num_workers = 4  # config_dict['num_workers']
 
+        limit = -1  # -1 for full dataset
+
         loader_kwargs = {'shuffle': True, 'batch_size': batch_size,
                          'num_workers': num_workers, 'pin_memory': True}
         train_loader, val_loader, test_loader = \
-            load_dataset(dataset_meta, dataset_module, limit=200, quiet=False, **loader_kwargs)
+            load_dataset(dataset_meta, dataset_module, limit=limit, quiet=False, **loader_kwargs)
 
         len_train_ds = len(train_loader.dataset)
         len_val_ds = len(val_loader.dataset)
@@ -271,7 +266,8 @@ if False:
 
     target_layers = [model.layer4[-1]]
 
-    imgs, labels = next(iter(train_loader))
+    sample = next(iter(train_loader))
+    imgs, labels = sample['image'], sample['label']
     with torch.no_grad():
         preds_raw = model.forward(imgs.to(device)).cpu()
         preds = softmax(preds_raw, dim=1).numpy()
@@ -391,7 +387,8 @@ if False:
         """
         Run prediction on an image
         uses global model and device
-        todo check for batch size > 1
+
+        - check for batch size > 1  #DONE#
         :param images: HWC numpy array
         :return:
         """
@@ -409,12 +406,14 @@ if False:
 
     explainer = lime_image.LimeImageExplainer()
 
-    imgs, labels = next(iter(train_loader))
+    sample = next(iter(train_loader))
+    imgs, labels = sample['image'], sample['label']
     with torch.no_grad():
         preds_raw = model.forward(imgs.to(device)).cpu()
         preds = softmax(preds_raw, dim=1).numpy()
 
     img_for_lime = (imgs[0].cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+    # todo use convert_for_lime function
     label = labels[0].item()
     explanation = explainer.explain_instance(img_for_lime, pred_hwc_np,
                                              top_labels=5, hide_color=0, num_samples=1000)

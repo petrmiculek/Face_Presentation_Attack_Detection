@@ -22,6 +22,9 @@ import dataset_siwm
 from util import save_dict_json, xor
 from dataset_base import BaseDataset, StandardLoader
 
+''' Logging format '''
+logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.DEBUG,
+                    datefmt='%Y-%m-%d %H:%M:%S')
 
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
@@ -34,10 +37,6 @@ parser.add_argument('-v', '--attack_val', help='attack type to validate on (1..7
 parser.add_argument('-r', '--attack_train', help='attack type to train on (1..7), random by default', type=int,
                     default=-1)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
-
-
-
-
 
 ''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
 '''
@@ -56,8 +55,9 @@ one_attack      |       .      |    .       |
 
 if __name__ == '__main__':
     """
-    Create dataset splits.
+    Create dataset training/val/test splits.
     """
+
     # set fixed seed
     seed = 42
     np.random.seed(seed)
@@ -80,31 +80,35 @@ if __name__ == '__main__':
         # todo limiting attacks (random x selected) not necessary, also include attack_val
         raise ValueError('one_attack mode requires both or none of --attack_test --attack_train arguments')
 
-    for attack in [args.attack_test, args.attack_train, args.attack_val]:
-        assert attack != bona_fide
+    assert bona_fide not in [args.attack_test, args.attack_train, args.attack_val], \
+        'bona_fide label used as an attack label'
 
     # paths
-    config_dir = 'dataset_lists'
-    os.makedirs(config_dir, exist_ok=True)
-    logging.debug(f'Writing to dir: {config_dir}')
-    save_path_train = join(config_dir, f'dataset_{dataset.name}_train_{training_mode}.csv')
-    save_path_val = join(config_dir, f'dataset_{dataset.name}_val_{training_mode}.csv')
-    save_path_test = join(config_dir, f'dataset_{dataset.name}_test_{training_mode}.csv')
+    dataset_lists_dir = 'dataset_lists'
+    if not os.path.isdir(dataset_lists_dir):
+        logging.info(f'Creating dir: {dataset_lists_dir}')
+        os.makedirs(dataset_lists_dir)
+
+    logging.info(f'Writing to dir: {dataset_lists_dir}')
+    save_path_train = join(dataset_lists_dir, f'dataset_{dataset.name}_train_{training_mode}.csv')
+    save_path_val = join(dataset_lists_dir, f'dataset_{dataset.name}_val_{training_mode}.csv')
+    save_path_test = join(dataset_lists_dir, f'dataset_{dataset.name}_test_{training_mode}.csv')
 
     # quit if files already exist
     if isfile(save_path_train) or isfile(save_path_val) or isfile(save_path_test):
         logging.error('Annotation files already exist, quitting.')
         logging.error(f'Dataset: {dataset.name}, Training mode: {training_mode}')
         logging.error(f'Files: {save_path_train}, .. val, .. test')
-        raise FileExistsError(f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {training_mode}')
+        raise FileExistsError(
+            f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {training_mode}')
 
     else:  # create new files
         logging.info('Creating new annotation files.')
         logging.info(f'Dataset: {dataset.name}, Training mode: {training_mode}')
 
     if training_mode == 'all_attacks':
-        label_names = dataset.label_names
-        num_classes = len(dataset.labels)
+        label_names = dataset.label_names_unified
+        num_classes = len(dataset.labels_unified)
     elif training_mode == 'one_attack':
         label_names = ['genuine', 'attack']
         num_classes = 2
@@ -121,13 +125,13 @@ if __name__ == '__main__':
     person_ids = pd.unique(paths_all['id0'])
 
     ''' Split dataset according to training mode '''
-    label_nums = dataset.label_nums
-    attack_nums = dataset.attack_nums
+    label_nums = dataset.label_nums_unified
+    attack_nums = dataset.attack_nums_unified
 
     if training_mode == 'all_attacks':
         ''' Train on all attacks, test on all attacks '''
 
-        paths_all['label'] = paths_all['label_num']  # 0..7
+        paths_all['label'] = paths_all['label_unif']  # 0..4
         # split subsets based on person ids
         val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
         train_ids = np.setdiff1d(person_ids, [val_id, test_id])
@@ -163,11 +167,11 @@ if __name__ == '__main__':
         train_ids = np.setdiff1d(person_ids, [val_id, test_id])
 
         # split train/val/test (based on attack type and person IDs)
-        paths_train = paths_all[paths_all['label_num'].isin([bona_fide, class_train])
+        paths_train = paths_all[paths_all['label_unif'].isin([bona_fide, class_train])
                                 & paths_all['id0'].isin(train_ids)]
-        paths_val = paths_all[paths_all['label_num'].isin([bona_fide, class_val])
+        paths_val = paths_all[paths_all['label_unif'].isin([bona_fide, class_val])
                               & paths_all['id0'].isin([val_id])]
-        paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
+        paths_test = paths_all[paths_all['label_unif'].isin([bona_fide, class_test])
                                & paths_all['id0'].isin([test_id])]
 
     elif training_mode == 'unseen_attack':
@@ -187,9 +191,10 @@ if __name__ == '__main__':
         train_ids = np.setdiff1d(person_ids, [test_id])
 
         # split train/val/test (based on attack type and person IDs)
-        paths_train = paths_all[paths_all['label_num'].isin([bona_fide, *class_train])
+        paths_train = paths_all[paths_all['label_unif'].isin(
+            [bona_fide, *class_train])  # todo: check in comparison to one_attack: *class_train, whereas there is no *
                                 & paths_all['id0'].isin(train_ids)]
-        paths_test = paths_all[paths_all['label_num'].isin([bona_fide, class_test])
+        paths_test = paths_all[paths_all['label_unif'].isin([bona_fide, class_test])
                                & (paths_all['id0'] == test_id)]
         paths_val = paths_test  # note: validation == test
     else:
@@ -197,15 +202,15 @@ if __name__ == '__main__':
 
     ''' Safety check '''
     unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
-    assert unique_classes == num_classes, \
-        f'Number of unique classes in dataset does not match number of classes in model\n' \
-        f'real: {unique_classes}, expected: {num_classes}'
+    if not unique_classes == num_classes:
+        logging.warning(f'Number of unique classes in dataset does not match number of classes in model\n' +
+                        f'real: {unique_classes}, expected: {num_classes}\n')
 
     training_mode_long = training_mode
     if training_mode in ['unseen_attack', 'one_attack']:
         training_mode_long += f'_{class_test}'
 
-    save_path_metadata = join(config_dir, f'dataset_{dataset.name}_metadata_{training_mode_long}.json')
+    save_path_metadata = join(dataset_lists_dir, f'dataset_{dataset.name}_metadata_{training_mode_long}.json')
 
     # metadata
     metadata = {
@@ -247,22 +252,24 @@ if __name__ == '__main__':
         paths_test = paths_test.sample(frac=1, random_state=seed).reset_index(drop=True)
 
         # limit size for prototyping
-        limit = 640  # -1 for no limit, 3200
+        limit = -1  # -1 for no limit, 3200
         if limit != -1:
             note += f'LIMIT={limit}_'
-            print(f'Limiting dataset (each split) to {limit} samples')
+            logging.warning(f'Limiting dataset (each split) to {limit} samples')
 
         paths_train = paths_train[:limit]
         paths_val = paths_val[:limit]
         paths_test = paths_test[:limit]
 
-        print('Dataset labels per split:')
+        logging.info('Dataset labels per split:')
         for paths in [paths_train, paths_val, paths_test]:
-            print(paths['label'].value_counts())
+            logging.info(paths['label'].value_counts())
 
     # print dictionary metadata
+    metadata_list = ['Metadata:']
     for key, value in metadata.items():
-        print(f'{key}: {value}')
+        metadata_list.append(f'{key}: {value}')
+    logging.info('\n'.join(metadata_list))
 
     ''' Save '''
     paths_train.to_csv(save_path_train, index=False)
@@ -273,7 +280,7 @@ if __name__ == '__main__':
     save_dict_json(metadata, save_path_metadata)
 
     # make csv out of metadata
-    path_datasets_csv = join(config_dir, 'datasets.csv')
+    path_datasets_csv = join(dataset_lists_dir, 'datasets.csv')
 
     # make metadata dataframe-serializable (list to str)
     for key, value in metadata.items():

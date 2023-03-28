@@ -1,9 +1,16 @@
 doing:
 
+* seed:
+  * apply for instantiating the model (weights) - verify same weights when not loading pretrained
+  * TypeError: DataLoader._\_init_\_() got an unexpected keyword argument 'seed' #DONE#
+  * delete printing seed after verifying it works (from dataset_base.py)
+
 * compare explanations of two different models
 
-* verify training runs after training loop simplification
-* verify evaluation runs with unified load_model
+* verify training runs after training loop simplification #DONE#
+* verify evaluation runs with unified load_model #DONE#
+
+* do transforms in DataLoader #DONE#
 
 * lime:
   * just call it #DONE#
@@ -12,6 +19,15 @@ doing:
 * many-run script can create run_x.sh files + finished files
 
 ############################## HOT
+
+* input size of EfficientNet_V2S is 384x384, whereas Resnet has 224x224
+  * transforms=partial(
+    ImageClassification,
+    crop_size=384,
+    resize_size=384,
+    interpolation=InterpolationMode.BILINEAR,
+    )
+  * things work fine, it's just that the resizing might be doing some unnecessary work
 
 ############################## HOT
 
@@ -35,11 +51,14 @@ todo:
 * training: one_attack, unseen_attack
 * extract one-to-last layer embeddings (for t-SNE etc.)
 * log the plots to wandb
-* check one-attack splitting in dataset_split
+* check one-attack splitting in dataset_split (fill in "OK" table in dataset_split.py)
 * regenerate one-attack datasets, with new attack splitting
 * one_attack training:
 * script: run training on every category separately TODO
 * possibly include out-of-distribution data for testing? #REJECT#
+* fixed seed for train.py
+* preprocess(sample) on cpu or gpu?
+* prep.sh - read job number somewhere from the environment
 
 unseen_attack training:
 
@@ -61,6 +80,23 @@ ideas:
 * W\&B profiling
 * re-name categories to use only main ones (mask, printed, video, etc.) (adapt RoseYoutu to SIW-M)
 
+* rethinking classes:
+  'Makeup',
+  'Live',
+  'Paper',
+  'Mask_partial',
+  'Replay',
+  'Mask'
+  ->
+  'Genuine',
+  'Printed',
+  'Video',
+  'Mask',
+  'Other'
+  * adapting rose_youtu #DONE#
+    * train again on metacentrum #DONE#
+  * adapt siw-m
+
 note:
 
 * val == test for unseen_attack
@@ -68,6 +104,7 @@ note:
 * dataset was cropped by resizing the bbox to a square (as opposed to keeping the original aspect ratio)
 * you're also explaining the code - mention the use-cases and give short script descriptions
 * slowing down training: images in original size, many small files (h5)
+* 2023-03-21: changed 'label_num' to 'label_unif', all newer models are not comparable
 
 #DONE# #DONE# #DONE#
 done:
@@ -142,6 +179,7 @@ problems:
 write:
 
 * implementation - training done on metacentrum, dataset kept in memory (shm), 16-bit training
+* reproducibility levels - dataset split, model initialization, training parameters, batch_size => drop_last
 
 #############
 trash bin:

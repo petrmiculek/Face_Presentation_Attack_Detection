@@ -12,6 +12,7 @@
       <excludeFolder url="file://$MODULE_DIR$/scripts" />
       <excludeFolder url="file://$MODULE_DIR$/scripts/.ipynb_checkpoints" />
       <excludeFolder url="file://$MODULE_DIR$/dataset_lists" />
+      <excludeFolder url="file://$MODULE_DIR$/config (copy)" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

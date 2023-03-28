@@ -7,12 +7,16 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose, Resize, Normalize, ConvertImageDtype, ToPILImage
 import pandas as pd
+import torch
+import random
+import numpy as np
+
 
 # local
 # -
 
 class BaseDataset(Dataset):
-    path_key = 'path_key'
+    path_key = 'path_key'  # todo unused
 
     def __init__(self, annotations, transform=None):
         self.transform = transform
@@ -27,7 +31,14 @@ class BaseDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return image, sample['label']
+        sample_dict = {
+            'image': image,
+            'label': sample['label'],
+            'path': sample['path']
+        }
+
+        return sample_dict
+
 
 def StandardLoader(dataset_class, annotations, **kwargs):
     """
@@ -39,32 +50,55 @@ def StandardLoader(dataset_class, annotations, **kwargs):
 
     possibly add:
     - fraction to limit dataset size
-    - random seed + fixed
+    - random seed + fixed  #DONE#
     - ddp
-    - drop_last
+    - drop_last  #DONE#
     -
-
     """
+
     shuffle = kwargs.pop('shuffle', False)
     batch_size = kwargs.pop('batch_size', 1)
     num_workers = kwargs.pop('num_workers', 1)
+    seed = kwargs.pop('seed', None)
+    transform = kwargs.pop('transform', None)
+
+    def seed_worker(worker_id):
+        """
+        Seed worker for dataloader.
+        The seed set in main process is propagated to all workers,
+        but only within Pytorch - not all other libraries.
+
+        :param worker_id:
+        """
+        worker_seed = seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+        print(f"Worker {worker_id} seed: {worker_seed}")  # todo DEBUG delete after confirming
 
     kwargs_dataset = {
         'num_workers': num_workers,
         'batch_size': batch_size,
         'pin_memory': True,
         'drop_last': True,
-        'shuffle': shuffle
+        'worker_init_fn': seed_worker,
+        'shuffle': shuffle,
     }
+
+    # this did not work
+    # if seed is not None:
+    #     g = torch.Generator()
+    #     g.manual_seed(seed)
+    #     kwargs_dataset['generator'] = g
 
     kwargs_dataset.update(kwargs)
 
-    transform = Compose([
-        # Resize((224, 224)),
-        ToTensor(),  # transforms.PILToTensor(),
-        # ConvertImageDtype(torch.float),
-        # Normalize(mean=[0.485, 0.456, 0.406],
-    ])
+    if transform is None:
+        transform = Compose([
+            # Resize((224, 224)),
+            ToTensor(),  # transforms.PILToTensor(),
+            # ConvertImageDtype(torch.float),
+            # Normalize(mean=[0.485, 0.456, 0.406],
+        ])
 
     dataset = dataset_class(annotations, transform=transform)
     loader = DataLoader(dataset, **kwargs_dataset)
@@ -80,7 +114,7 @@ def pick_dataset_version(name, mode):
     :param mode: training mode
     :return: metadata pandas series
     """
-    path_datasets_csv = join('config', 'datasets.csv')
+    path_datasets_csv = join('dataset_lists', 'datasets.csv')
     datasets = pd.read_csv(path_datasets_csv)
     available = datasets[['dataset_name', 'training_mode']].values
 
@@ -113,25 +147,35 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kw
     :param dataset_module: python module with dataset class (see note)
     :param limit: limit dataset size (enables shuffling)
     :param quiet: silent mode
-    :param loader_kwargs: keyword arguments for dataset loader
+    :param loader_kwargs: keyword arguments for dataset loader (see below)
+
+    loaders_kwargs:
+        - seed:
+        - shuffle:
+            shuffle datasets during loading (list of their files -> same for all epochs),
+            also shuffles training dataset inside DataLoader (on each epoch)
+
     :return: dataset loaders for train, val, test
 
     :note: dataset_module used so that we don't import individual datasets here -> cycle
     """
-    # name = metadata_row['dataset_name']  # could reimport dataset module here
+    # name = metadata_row['dataset_name']  # todo could reimport dataset module here
+    seed = loader_kwargs.pop('seed', None)
 
     # load annotations
     paths_train = pd.read_csv(metadata_row['path_train'])
     paths_val = pd.read_csv(metadata_row['path_val'])
     paths_test = pd.read_csv(metadata_row['path_test'])
 
+    num_classes = int(metadata_row['num_classes'])
+
     shuffle = loader_kwargs.pop('shuffle', False)
     # shuffle initial order
     if limit != -1 or shuffle:
         # shuffle when limiting dataset size to keep classes balanced
-        paths_train = paths_train.sample(frac=1).reset_index(drop=True)
-        paths_val = paths_val.sample(frac=1).reset_index(drop=True)
-        paths_test = paths_test.sample(frac=1).reset_index(drop=True)
+        paths_train = paths_train.sample(frac=1, random_state=seed).reset_index(drop=True)
+        paths_val = paths_val.sample(frac=1, random_state=seed).reset_index(drop=True)
+        paths_test = paths_test.sample(frac=1, random_state=seed).reset_index(drop=True)
 
         # limit dataset size
         print(f'Limiting dataset (each split) to {limit} samples.')
@@ -142,13 +186,28 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kw
     # print label distributions
     if not quiet:
         print('Dataset labels per split:')
+        print(f'num_classes: {num_classes}')
+        # it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
+        # for split, paths in it:
+        #     print(f'{split}:', list(paths['label'].value_counts().sort_index()))
+
+        # repeat the same but include also labels not present in the split
+        print('Dataset labels per split (including missing labels):')
         it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
         for split, paths in it:
-            print(f'{split}:', list(paths['label'].value_counts().sort_index()))
+            class_occurences = []
+            value_counts = paths['label'].value_counts().sort_index()
+            for i in range(num_classes):
+                if i in paths['label'].values:
+                    class_occurences.append(value_counts[i])
+                else:
+                    class_occurences.append(0)
+
+            print(f'{split}:', class_occurences)
 
     # data loaders
-    loader_train = dataset_module.Loader(paths_train, **loader_kwargs, shuffle=shuffle)
-    loader_val = dataset_module.Loader(paths_val, **loader_kwargs)
-    loader_test = dataset_module.Loader(paths_test, **loader_kwargs)
+    loader_train = dataset_module.Loader(paths_train, seed=seed, **loader_kwargs, shuffle=shuffle)
+    loader_val = dataset_module.Loader(paths_val, seed=seed, **loader_kwargs)
+    loader_test = dataset_module.Loader(paths_test, seed=seed, **loader_kwargs)
 
     return loader_train, loader_val, loader_test

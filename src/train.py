@@ -42,7 +42,6 @@ from util import get_dict, print_dict, keys_append, save_dict_json, count_parame
 from model_util import EarlyStopping, load_model
 from dataset_base import pick_dataset_version, load_dataset
 
-
 ''' Global variables '''
 # -
 ''' Parsing Arguments '''
@@ -56,6 +55,8 @@ parser.add_argument('-l', '--lr', help='learning rate', type=float, default=conf
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
+parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
+parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
 
 # set custom help message
 parser.description = 'Train a model on a dataset'
@@ -63,12 +64,12 @@ parser.description = 'Train a model on a dataset'
 # print('main is not being run')  # uncomment this when using def main...
 # def main():
 if __name__ == '__main__':
-    print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
+    print(f'Running: {__file__}\n'
+          f'In dir: {os.getcwd()}')
 
     ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     args_dict = get_dict(args)
-    print_dict(args_dict, 'Args')
     for k, v in vars(config).items():
         # update config with args
         if k in args_dict:
@@ -76,9 +77,20 @@ if __name__ == '__main__':
         elif k in config.HPARAMS:
             setattr(config, k, config.HPARAMS[k])
 
-    ''' Dataset + Training mode '''
+    # print all arguments
+    print_dict(args_dict, 'Args')  # potentially print dict of vars(config)
 
-    # load dataset module
+    ''' (Random) seed '''
+    # up to max integer
+    seed = args.seed if args.seed else np.random.randint(0, 2 ** 32 - 1)
+    print(f'Random seed: {seed}')
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # torch.backends.cudnn.deterministic = True  # can this make things fail?
+
+    ''' Dataset + Training mode '''
+    # load dataset module - name based match for the .py module, specific split is defined later
     if args.dataset == 'rose_youtu':
         import dataset_rose_youtu as dataset_module
     elif args.dataset == 'siwm':
@@ -91,8 +103,8 @@ if __name__ == '__main__':
     label_names_binary = ['genuine', 'attack']
     # separate_person_ids = False  # unused: train on one person, test on another
     if training_mode == 'all_attacks':
-        label_names = dataset_module.label_names
-        num_classes = len(dataset_module.labels)
+        label_names = dataset_module.label_names_unified
+        num_classes = len(dataset_module.labels_unified)
     elif training_mode == 'one_attack':
         label_names = label_names_binary
         num_classes = 2
@@ -120,8 +132,9 @@ if __name__ == '__main__':
         print(f"Current device: {torch.cuda.current_device()}")
         print(f"Device name: {torch.cuda.get_device_name(0)}")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # device = torch.device("cpu")
         print(f'Running on device: {device}')
-        torch.backends.cudnn.benchmark = True
+        # torch.backends.cudnn.benchmark = True  # makes training non-deterministic?
 
         # Logging Setup
         logging.basicConfig(level=logging.WARNING)
@@ -136,17 +149,23 @@ if __name__ == '__main__':
             "batch_size": args.batch_size,
             "training_mode": training_mode,
             "num_classes": num_classes,
+            "seed": seed,
         }
-        wb.init(project="facepad", config=wb.config)
+        wb.init(project="facepad", config=wb.config, mode='disabled' if args.no_log else None)
         run_name = wb.run.name
         print(f'W&B run name: {run_name}')
-        outputs_dir = join('runs', run_name)
-        os.makedirs(outputs_dir, exist_ok=True)
-        checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
+        if args.no_log:
+            print('Not logging to W&B')
+            outputs_dir = None
+            checkpoint_path = None
+        else:
+            outputs_dir = join('runs', run_name)
+            os.makedirs(outputs_dir, exist_ok=True)
+            checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
 
     ''' Model '''
     if True:
-        model_name = 'efficientnet_v2_s'
+        model_name = args.model
         model, preprocess = load_model(model_name, num_classes)
 
         # freeze all previous layers
@@ -179,12 +198,12 @@ if __name__ == '__main__':
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
-        limit = -1
+        limit = 20  # -1 for no limit
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
-                         'pin_memory': True}
+                         'pin_memory': True, 'seed': seed, 'transform': preprocess}
         train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
                                                              quiet=False, **loader_kwargs)
-        bona_fide = dataset_module.bona_fide
+        bona_fide = dataset_module.bona_fide_unified
 
         len_train_ds = len(train_loader.dataset)
         len_val_ds = len(val_loader.dataset)
@@ -233,14 +252,16 @@ if __name__ == '__main__':
         labels_train = []
 
         try:
-            with tqdm(train_loader, leave=False, mininterval=1.) as progress_bar:
-                for img, label in progress_bar:
+            with tqdm(train_loader, leave=True, mininterval=1., desc=f'ep{epoch} train') as progress_bar:
+                for sample in progress_bar:
                     optimizer.zero_grad(set_to_none=True)
-                    img = preprocess(img).to(device, non_blocking=True)  # transfer to gpu should happen in autocast
+                    img, label = sample['image'], sample['label']
+                    img = img.to(device,
+                                 non_blocking=True)  # should transfer to gpu happen in autocast?  # preprocess(img)
                     label = label.to(device, non_blocking=True)
 
-                    # prediction
                     with autocast(device_type='cuda', dtype=torch.float16):
+                        # prediction
                         out = model(img)
                         loss = criterion(out, label)
 
@@ -260,7 +281,7 @@ if __name__ == '__main__':
                         labels_train.append(label.cpu().numpy())
                         preds_train.append(prediction_hard.cpu().numpy())
 
-                    progress_bar.set_postfix(loss=f'{loss:.4f}')
+                        progress_bar.set_postfix(loss=f'{loss:.4f}')
 
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')
@@ -278,10 +299,10 @@ if __name__ == '__main__':
         preds_val = []
         labels_val = []
         with torch.no_grad():
-            for img, label in tqdm(val_loader, leave=False, mininterval=1.):
+            for sample in tqdm(val_loader, leave=True, mininterval=1., desc=f'ep{epoch} val'):
+                img, label = sample['image'], sample['label']
                 img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-                img_batch = preprocess(img)
-                out = model(img_batch)
+                out = model(img)
                 loss = criterion(out, label)
                 ep_loss_val += loss.cpu().numpy()
 
@@ -330,7 +351,7 @@ if __name__ == '__main__':
     ''' End of Training Loop '''
     print('Training finished')
     # load best model checkpoint
-    if os.path.isfile(checkpoint_path):
+    if checkpoint_path and os.path.isfile(checkpoint_path):
         model.load_state_dict(torch.load(checkpoint_path))
         print('Loaded model checkpoint')
 
@@ -344,10 +365,10 @@ if __name__ == '__main__':
     with torch.no_grad():
         total_loss_test = 0
         total_correct_test = 0
-        for img, label in tqdm(test_loader, leave=False, mininterval=1.):
-            img, label = img.to(device), label.to(device)
-            img_batch = preprocess(img)
-            out = model(img_batch)
+        for sample in tqdm(test_loader, leave=False, mininterval=1., desc=f'test'):
+            img, label = sample['image'], sample['label']
+            img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
+            out = model(img)
             loss = criterion(out, label)
             total_loss_test += loss.detach().cpu().numpy()
 
@@ -380,13 +401,13 @@ if __name__ == '__main__':
 
     ''' Confusion matrix '''
     if args.mode == 'one_attack':
-        attack_train_name = dataset_module.label_names[attack_train]
-        attack_test_name = dataset_module.label_names[attack_test]
+        attack_train_name = dataset_module.label_names_unified[attack_train]
+        attack_test_name = dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
                        f'\ntrain: {attack_train_name}({attack_train}), ' \
                        f'test:{attack_test_name}({attack_test})'
     elif args.mode == 'unseen_attack':
-        attack_test_name = dataset_module.label_names[args.attack_test]
+        attack_test_name = dataset_module.label_names_unified[args.attack_test]
         title_suffix = f'Test' \
                        f'\ntrain: all but test, ' \
                        f'test:{attack_test_name}({attack_test})'
@@ -395,18 +416,19 @@ if __name__ == '__main__':
                        '\ntrain: all, ' \
                        'test: all'
 
-    cm_path = join(outputs_dir, 'confusion_matrix' + '.pdf')
+    cm_path = join(outputs_dir, 'confusion_matrix' + '.pdf') if not args.no_log else None
     confusion_matrix(labels_test, preds_test, labels=label_names,
                      normalize=False, title_suffix=title_suffix,
                      output_location=cm_path, show=show_plots)
 
     # binary confusion matrix
     if args.mode == 'all_attacks':
-        cm_binary_path = join(outputs_dir, 'confusion_matrix_binary' + '.pdf')
+        cm_binary_path = join(outputs_dir, 'confusion_matrix_binary' + '.pdf') if not args.no_log else None
         confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
                          normalize=False, title_suffix=title_suffix,
                          output_location=cm_binary_path, show=show_plots)
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}
     print_dict(union_dict, 'All info dump')
-    save_dict_json(union_dict, path=os.path.join(outputs_dir, 'config.json'))
+    path_config_out = os.path.join(outputs_dir, 'config.json') if not args.no_log else None
+    save_dict_json(union_dict, path=path_config_out)

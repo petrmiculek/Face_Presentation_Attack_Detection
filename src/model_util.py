@@ -1,5 +1,5 @@
 """
-    :filename EarlyStopping.py
+    :filename model_util.py (originally EarlyStopping.py)
 
     :brief EarlyStopping class file.
 
@@ -56,7 +56,8 @@ from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
 from src.resnet18 import resnet18
 
 
-def load_model(model_name, num_classes):
+def load_model(model_name, num_classes, seed=None):
+    # todo seed is not used
     if model_name == 'resnet18':
         # load model with pretrained weights
         weights = ResNet18_Weights.IMAGENET1K_V1
@@ -73,7 +74,7 @@ def load_model(model_name, num_classes):
             torch.nn.Dropout(p=dropout, inplace=True),
             torch.nn.Linear(1280, num_classes),
         )
-        # load weights
+
         preprocess = weights.transforms()
     else:
         raise ValueError(f'Unknown model name {model_name}')
@@ -119,8 +120,10 @@ class EarlyStopping:
         """Saves model when validation loss decrease."""
         if self.verbose:
             self.trace_func(
-                f'Validation loss decreased ({self.val_loss_min:.4f} -> {val_loss:.4f}). Saving model ...')
+                f'Validation loss decreased ({self.val_loss_min:.4f} -> {val_loss:.4f}).')
 
-        torch.save(model.state_dict(), self.path)
+        if self.path is not None:
+            torch.save(model.state_dict(), self.path)
+            self.trace_func('Saving model ...')
 
         self.val_loss_min = val_loss

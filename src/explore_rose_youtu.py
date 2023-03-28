@@ -18,7 +18,7 @@ from dataset_rose_youtu import read_annotations, labels
 def plot_category_counts_per_id(paths_all):
     """ Plot category counts per ID as multiple figures """
     for id0 in np.unique(paths_all['id0']):
-        sns.histplot(paths_all[paths_all['id0'] == id0]['label_num'])
+        sns.histplot(paths_all[paths_all['id0'] == id0]['label_num'])  # changed 'label_num' to 'label_unif' on Mar 21
         plt.title(f'Label distribution for ID {id0}')
         plt.show()
 
@@ -28,7 +28,8 @@ def plot_category_counts_all_ids(paths_all):
     fig, axs = plt.subplots(2, 5, figsize=(20, 10))
     fig.suptitle('Label distribution for all IDs', fontsize=16)
     for i, id0 in enumerate(np.unique(paths_all['id0'])):
-        sns.histplot(paths_all[paths_all['id0'] == id0]['label_num'], ax=axs[i // 5, i % 5])
+        sns.histplot(paths_all[paths_all['id0'] == id0]['label_num'],
+                     ax=axs[i // 5, i % 5])  # changed 'label_num' to 'label_unif' on Mar 21
         axs[i // 5, i % 5].set_title(f'Label distribution for ID {id0}')
         axs[i // 5, i % 5].set_xlabel('Label')
         # set axis ticks to be integers
@@ -45,7 +46,8 @@ def plot_example_images(paths_all):
     for i, label_num in enumerate(labels.values()):
         # get first image for each label
         try:
-            img_path = paths_all[paths_all['label_num'] == i]['path'].iloc[0]
+            img_path = paths_all[paths_all['label_num'] == i]['path'].iloc[
+                0]  # changed 'label_num' to 'label_unif' on Mar 21
         except:
             print('No images for label', label_num)
             img = np.zeros((256, 256, 3))
@@ -91,11 +93,13 @@ def main():
 
         ''' Explore data '''
         # pandas dataframe - index by id0, columns by label_num
-        df = paths_all[['id0', 'label_num']].groupby('id0').value_counts().unstack(fill_value=0)
+        df = paths_all[['id0', 'label_num']].groupby('id0').value_counts().unstack(
+            fill_value=0)  # changed 'label_num' to 'label_unif' on Mar 21
         print(df)
 
         # unique tuples of (id0, label_num)
-        unique_id0_label_num, counts = np.unique(paths_all[['id0', 'label_num']].to_numpy(), axis=0, return_counts=True)
+        unique_id0_label_num, counts = np.unique(paths_all[['id0', 'label_num']].to_numpy(), axis=0,
+                                                 return_counts=True)  # changed 'label_num' to 'label_unif' on Mar 21
 
         ''' Unique values per column '''
         print('Unique values per column')
@@ -109,7 +113,8 @@ def main():
 
     if False:
         ''' Plot attack category distribution (paths_all) '''
-        paths_all['label_num'].value_counts().plot.bar()
+        paths_all[
+            'label_num'].value_counts().plot.bar()  # changed 'label_num' to 'label_unif' on Mar 21'].value_counts().plot.bar()
         plt.title('Attack Category distribution')
         plt.xlabel('Attack Category')
         plt.ylabel('Count')
@@ -124,6 +129,7 @@ def main():
             subset_name = [k for k, v in locals().items() if v is subset][0]
 
             df_train = subset[['id0', 'label_num']].groupby('id0').value_counts().unstack(fill_value=0).plot.bar(
+                # changed 'label_num' to 'label_unif' on Mar 21']].groupby('id0').value_counts().unstack(fill_value=0).plot.bar(
                 stacked=True)
             # name legend by categories_names (not x-axis)
             df_train.legend(cat_names, loc='center left', bbox_to_anchor=(1, 0.5))

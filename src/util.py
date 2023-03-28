@@ -82,6 +82,10 @@ def keys_append(dictionary, suffix):
 
 
 def save_dict_json(union_dict, path):
+    if path is None:
+        print('Not saving config to json, path is None.')
+        return
+
     # make dictionary serializable as JSON
     for k, v in union_dict.items():
         if type(v) == np.ndarray:
