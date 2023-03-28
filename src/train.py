@@ -198,7 +198,7 @@ if __name__ == '__main__':
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
-        limit = 20  # -1 for no limit
+        limit = -1  # -1 for no limit
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
                          'pin_memory': True, 'seed': seed, 'transform': preprocess}
         train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
