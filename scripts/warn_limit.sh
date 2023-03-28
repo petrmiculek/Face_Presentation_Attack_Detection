@@ -2,7 +2,7 @@
 # go through all .py files line by line, and warn if a line contains "limit = \d+"
 
 # get all .py files
-files=`find . -name "*.py"`
+files=`find ../src -name "*.py"`
 
 re="limit = [0-9]+"
 retval=0
