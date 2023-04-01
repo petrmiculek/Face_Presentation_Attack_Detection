@@ -28,7 +28,7 @@ class LogTime:
             print(f'{i:02d}| {(t - self.times[0]):2.2f}| {msg}')
 
 
-def count_parameters(model):
+def count_parameters(model, sum_only=False):
     """
     Count total number of trainable parameters of a torch model. Prints table of its layers.
 
@@ -46,7 +46,8 @@ def count_parameters(model):
         table.add_row([name, param])
         params += param
 
-    print(table)
+    if not sum_only:
+        print(table)
     # print number of params in exponential notation
     print(f"Params#: {params:.3e}")
 

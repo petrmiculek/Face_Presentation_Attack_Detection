@@ -72,10 +72,11 @@ parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, ru
 # parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)',
 #                     type=str, default=None)
 # parser.add_argument('-d', '--dataset', help='dataset to evaluate on', type=str, default=None)
-parser.add_argument('-r', '--run', help='model/dataset/settings to load', type=str, default=None)
+parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
 
 
 def save_i(path_save, preds_test):
+    """ Save but don't overwrite """
     if os.path.exists(path_save):
         print(f'File {path_save} already exists, skipping saving.')
     else:
@@ -83,6 +84,7 @@ def save_i(path_save, preds_test):
 
 
 def eval_loop(loader):
+    """ Evaluate model on dataset """
     len_loader = len(loader)
     ep_loss = 0.0
     preds = []

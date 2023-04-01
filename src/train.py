@@ -64,9 +64,6 @@ parser.description = 'Train a model on a dataset'
 # print('main is not being run')  # uncomment this when using def main...
 # def main():
 if __name__ == '__main__':
-    print(f'Running: {__file__}\n'
-          f'In dir: {os.getcwd()}')
-
     ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     args_dict = get_dict(args)
@@ -77,6 +74,16 @@ if __name__ == '__main__':
         elif k in config.HPARAMS:
             setattr(config, k, config.HPARAMS[k])
 
+    ''' Start W&B '''
+    wb.config = {
+        "learning_rate": args.lr,
+        "batch_size": args.batch_size,
+    }
+    # all stdout is saved after init
+    wb.init(project="facepad", config=wb.config, mode='disabled' if args.no_log else None)
+
+    print(f'Running: {__file__}\n'
+          f'In dir: {os.getcwd()}')
     # print all arguments
     print_dict(args_dict, 'Args')  # potentially print dict of vars(config)
 
@@ -114,6 +121,23 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
 
+        ''' Initialization '''
+    if True:
+        # training config and logging
+        training_run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        config.training_run_id = training_run_id
+
+        run_name = wb.run.name
+        print(f'W&B run name: {run_name}')
+        if args.no_log:
+            print('Not logging to W&B')
+            outputs_dir = None
+            checkpoint_path = None
+        else:
+            outputs_dir = join('runs', run_name)
+            os.makedirs(outputs_dir, exist_ok=True)
+            checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
+
     print(f'Training multiclass softmax CNN '
           f'on {args.dataset} dataset in {training_mode} mode')
 
@@ -125,7 +149,6 @@ if __name__ == '__main__':
         show_plots = False
         print('Not running in Pycharm, not displaying plots')
 
-    ''' Initialization '''
     if True:
         # check available gpus
         print(f"Available GPUs: {torch.cuda.device_count()}")
@@ -138,30 +161,6 @@ if __name__ == '__main__':
 
         # Logging Setup
         logging.basicConfig(level=logging.WARNING)
-
-    if True:
-        # training config and logging
-        training_run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        config.training_run_id = training_run_id
-
-        wb.config = {
-            "learning_rate": args.lr,
-            "batch_size": args.batch_size,
-            "training_mode": training_mode,
-            "num_classes": num_classes,
-            "seed": seed,
-        }
-        wb.init(project="facepad", config=wb.config, mode='disabled' if args.no_log else None)
-        run_name = wb.run.name
-        print(f'W&B run name: {run_name}')
-        if args.no_log:
-            print('Not logging to W&B')
-            outputs_dir = None
-            checkpoint_path = None
-        else:
-            outputs_dir = join('runs', run_name)
-            os.makedirs(outputs_dir, exist_ok=True)
-            checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
 
     ''' Model '''
     if True:
@@ -225,17 +224,23 @@ if __name__ == '__main__':
          "val_id": dataset_meta['val_id'],
          "test_id": dataset_meta['test_id'],
          "model_name": model_name,
+         "training_mode": training_mode,
+         "num_classes": num_classes,
+         "seed": seed,
          })
 
     config_dump = get_dict(config)
     wb.config.update(config_dump)
-    # global args_global
 
+    # remove seed, otherwise wb.config.update errors out when overwriting with None
+    args_dict.pop('seed')
+    # updating with program args (overwrites config)
     wb.config.update(args_dict)
 
     # Print setup
+    print('Printing config, values may have been overwritten by program args')
     print_dict(config_dump, title='Config:')
-    count_parameters(model)
+    count_parameters(model, sum_only=True)
 
     ''' Training '''
     # run training
@@ -244,6 +249,7 @@ if __name__ == '__main__':
 
     epochs_trained = 0
     stop_training = False
+    grad_acc_steps = 4
     for epoch in range(epochs_trained, epochs_trained + args.epochs):
         print(f'Epoch {epoch}')
         model.train()
@@ -252,9 +258,8 @@ if __name__ == '__main__':
         labels_train = []
 
         try:
-            with tqdm(train_loader, leave=True, mininterval=1., desc=f'ep{epoch} train') as progress_bar:
-                for sample in progress_bar:
-                    optimizer.zero_grad(set_to_none=True)
+            with tqdm(train_loader, mininterval=1., desc=f'ep{epoch} train') as progress_bar:
+                for i, sample in enumerate(progress_bar, start=1):
                     img, label = sample['image'], sample['label']
                     img = img.to(device,
                                  non_blocking=True)  # should transfer to gpu happen in autocast?  # preprocess(img)
@@ -267,21 +272,24 @@ if __name__ == '__main__':
 
                     # backward pass
                     scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
+
+                    if i % grad_acc_steps == 0:
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad(set_to_none=True)
 
                     with torch.no_grad():
                         ep_train_loss += loss.cpu().numpy()
 
                         # compute accuracy
                         prediction_hard = torch.argmax(out, dim=1)
-                        match = prediction_hard == label
+                        # match = prediction_hard == label
 
                         # save predictions
                         labels_train.append(label.cpu().numpy())
                         preds_train.append(prediction_hard.cpu().numpy())
 
-                        progress_bar.set_postfix(loss=f'{loss:.4f}')
+                        progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
 
         except KeyboardInterrupt:
             print('Ctrl+C stopped training')

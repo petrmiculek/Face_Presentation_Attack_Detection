@@ -11,6 +11,11 @@ doing:
 * verify evaluation runs with unified load_model #DONE#
 
 * do transforms in DataLoader #DONE#
+  * now that transforms run inside the dataloader, rerun benchmark for training speed w.r.t. batch size and number of
+    workers
+
+* code saves the model on min val loss, but best epoch stats based on highest val accu
+
 
 * lime:
   * just call it #DONE#
@@ -28,8 +33,8 @@ doing:
     interpolation=InterpolationMode.BILINEAR,
     )
   * things work fine, it's just that the resizing might be doing some unnecessary work
-
-############################## HOT
+  * what size are the input images?
+    ############################## HOT
 
 * pred_hwc_np uses F.softmax - is it correct? Why is it not used in the training? What comes out of the model?
 * It should be easy to make EfficientNet produce its one-to-last layer embeddings.

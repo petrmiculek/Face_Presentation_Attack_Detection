@@ -1,9 +1,9 @@
 # run default training script
 
 # detect if running on local
-if [ -z "$SLURM_JOB_ID" ]; then
+if [ -z "$SCRATCHDIR" ]; then
     echo "Running on local machine"
-    export CUDA_VISIBLE_DEVICES=0
+#    export CUDA_VISIBLE_DEVICES=0
     py="python3"
     batch_size=1
     num_workers=4
@@ -11,10 +11,11 @@ if [ -z "$SLURM_JOB_ID" ]; then
     seed=42
 else
     echo "Running on cluster"
-    py=/opt/conda/bin/python3
+    py=/opt/conda/bin/python3  # 3.8.X on singularity 22.10
+#    py=/usr/bin/python  # 3.8.10 on singularity 23.02
     batch_size=16
-    num_workers=8
-    epochs=20
+    num_workers=16
+    epochs=10
     seed=$RANDOM
 fi
 
@@ -26,4 +27,7 @@ fi
 
 $py src/train.py -a efficientnet_v2_s -l 0.0001 -b $batch_size -e $epochs -w $num_workers -s "$seed"
 
-# run from root repo directory
+# batch size:
+# glados, RTX 2080, 8GB -> 16; leaked 5GB during the work :/, glados cannot run singularity23.02
+# adan, 16GB
+# in speed benchmark for empty training loop, batch size 64 is used - not realistic for training

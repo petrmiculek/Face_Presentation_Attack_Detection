@@ -1,9 +1,10 @@
 import os
 import sys
 
-sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
+sys_path_extension = [os.getcwd(), os.path.join(os.pardir, 'src')] + \
+                     [d for d in os.listdir() if os.path.isdir(d)] + \
+                     [d for d in os.listdir(os.pardir) if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
-
 from time import perf_counter
 import multiprocessing as mp
 from tqdm import tqdm
@@ -18,15 +19,18 @@ dataset_meta = pick_dataset_version('rose_youtu', 'all_attacks')
 
 for num_workers in range(2, mp.cpu_count() + 1, 2):
     loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
-                     'pin_memory': True}
+                     'pin_memory': True, 'seed': 1}
     train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
                                                          quiet=True, **loader_kwargs)
     start = perf_counter()
-    for epoch in range(1, 3):
-        for i, data in tqdm(enumerate(train_loader, 0), desc=f'{num_workers=},{epoch=}', total=len(train_loader)):
-            pass
-    end = perf_counter()
-    print(f'\t\t\tFinish with:{end - start:.4f} second, {num_workers=}')
+    try:
+        for epoch in range(1, 3):
+            for i, data in tqdm(enumerate(train_loader, 0), desc=f'{num_workers=},{epoch=}', total=len(train_loader)):
+                pass
+        end = perf_counter()
+        print(f'\t\t\tFinish with:{end - start:.4f} second, {num_workers=}')
+    except KeyboardInterrupt as e:
+        pass
 
 """
 best results found:

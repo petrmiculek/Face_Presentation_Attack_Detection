@@ -70,10 +70,10 @@ def StandardLoader(dataset_class, annotations, **kwargs):
 
         :param worker_id:
         """
-        worker_seed = seed + worker_id
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
-        print(f"Worker {worker_id} seed: {worker_seed}")  # todo DEBUG delete after confirming
+        if seed is not None:
+            worker_seed = seed + worker_id
+            np.random.seed(worker_seed)
+            random.seed(worker_seed)
 
     kwargs_dataset = {
         'num_workers': num_workers,
