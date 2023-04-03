@@ -11,21 +11,33 @@ doing:
 * verify evaluation runs with unified load_model #DONE#
 
 * do transforms in DataLoader #DONE#
-  * now that transforms run inside the dataloader, rerun benchmark for training speed w.r.t. batch size and number of
-    workers
+  * rerun benchmark for training speed w.r.t. batch size and number of
+    workers - also needs model fw-bw pass, as that is a bottleneck
 
 * code saves the model on min val loss, but best epoch stats based on highest val accu
 
+* before running mass-generation of explanations, the evaluate-script needs argparsing
+
+* changing paths to the dataset is tricky in:
+  * loading a dataset through the datasets.csv already says, where the dataset paths
+    are located. Even when changing the 'dataset_lists' path in dataset_base,
+    if the datasets.csv point to the original directory, nothing changes and old data paths are used.
+  * where are paths absolute and where relative: **TODO**
+    * dataset_base.py: dataset_lists
+    * dataset_split.py: dataset_root
+    * dataset_lists/datasets.csv ->
+    * dataset_lists/dataset_xyz.csv -> abs path to sample
 
 * lime:
   * just call it #DONE#
   * generate many
-  *
+  * model's certainty does not come into play at all
+
 * many-run script can create run_x.sh files + finished files
 
 ############################## HOT
 
-* input size of EfficientNet_V2S is 384x384, whereas Resnet has 224x224
+* input size of EfficientNet_v2_s is 384x384, whereas Resnet has 224x224
   * transforms=partial(
     ImageClassification,
     crop_size=384,
@@ -180,6 +192,7 @@ problems:
 * pipenv might not be available on metacentrum // not necessary with currently used packages (grad-cam, lime not tested)
 * confusion matrix pdf binary has 2 legends and overwritten text #DONE#
 * some earlier runs (astral-paper-14)' confusion matrix counts don't add up, ok on eval
+* activating singularity 23.02 on adan - complains, but runs
 
 write:
 

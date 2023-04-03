@@ -2,7 +2,7 @@
 
 # detect if running on local
 if [ -z "$SCRATCHDIR" ]; then
-    echo "Running on local machine"
+    echo "# Running on local machine"
 #    export CUDA_VISIBLE_DEVICES=0
     py="python3"
     batch_size=1
@@ -10,7 +10,7 @@ if [ -z "$SCRATCHDIR" ]; then
     epochs=1
     seed=42
 else
-    echo "Running on cluster"
+    echo "# Running on cluster"
     py=/opt/conda/bin/python3  # 3.8.X on singularity 22.10
 #    py=/usr/bin/python  # 3.8.10 on singularity 23.02
     batch_size=16

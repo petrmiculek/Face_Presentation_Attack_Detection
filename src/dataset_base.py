@@ -114,7 +114,7 @@ def pick_dataset_version(name, mode):
     :param mode: training mode
     :return: metadata pandas series
     """
-    path_datasets_csv = join('dataset_lists', 'datasets.csv')
+    path_datasets_csv = join('dataset_lists', 'datasets.csv')  # todo make into a parameter
     datasets = pd.read_csv(path_datasets_csv)
     available = datasets[['dataset_name', 'training_mode']].values
 
@@ -185,14 +185,7 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kw
 
     # print label distributions
     if not quiet:
-        print('Dataset labels per split:')
-        print(f'num_classes: {num_classes}')
-        # it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
-        # for split, paths in it:
-        #     print(f'{split}:', list(paths['label'].value_counts().sort_index()))
-
-        # repeat the same but include also labels not present in the split
-        print('Dataset labels per split (including missing labels):')
+        print('Dataset labels per split:')  # including labels not present
         it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
         for split, paths in it:
             class_occurences = []

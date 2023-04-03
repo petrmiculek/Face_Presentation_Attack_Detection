@@ -47,6 +47,7 @@ import config
 # import dataset_rose_youtu as dataset
 from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, xor, keys_append, save_dict_json
+from model_util import load_model
 import resnet18
 
 run_dir = ''
@@ -55,6 +56,7 @@ run_dir = ''
 
 # run_dir = 'runs/wandering-breeze-87'  # 'all_attacks', efficientnet_v2_s
 # run_dir = 'runs/astral-paper-14'  # 'all_attacks', efficientnet_v2_s
+# run_dir = 'runs/colorful-breeze-45'  # 'all_attacks', resnet18
 
 model = None
 device = None
@@ -75,12 +77,15 @@ parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, ru
 parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
 
 
-def save_i(path_save, preds_test):
+def save_i(path, file, overwrite=False):
     """ Save but don't overwrite """
-    if os.path.exists(path_save):
-        print(f'File {path_save} already exists, skipping saving.')
+    exists = os.path.exists(path)
+    if exists and not overwrite:
+        print(f'File {path} exists, skipping saving.')
     else:
-        np.save(path_save, preds_test)
+        if exists:
+            print(f'File {path} exists, overwriting.')
+        np.save(path, file)
 
 
 def eval_loop(loader):
@@ -89,6 +94,7 @@ def eval_loop(loader):
     ep_loss = 0.0
     preds = []
     labels = []
+    paths = []
     with torch.no_grad():
         for sample in tqdm(loader, mininterval=1., desc='Eval'):
             img, label = sample['image'], sample['label']
@@ -105,6 +111,8 @@ def eval_loop(loader):
             labels.append(label.cpu().numpy())
             preds.append(prediction_hard.cpu().numpy())
 
+            paths.append(sample['path'])
+
     # loss is averaged over batch already, divide by batch number
     ep_loss /= len_loader
 
@@ -118,8 +126,33 @@ def eval_loop(loader):
 
     preds = np.concatenate(preds)
     labels = np.concatenate(labels)
+    paths = np.concatenate(paths)
 
-    return res_epoch, preds, labels
+    return res_epoch, preds, labels, paths
+
+
+def get_preds(dataset_loader, split_name, output_dir):
+    path_save_preds = join(output_dir, f'preds_{split_name}.npy')
+    path_save_labels = join(output_dir, f'labels_{split_name}.npy')
+    path_save_paths = join(output_dir, f'paths_{split_name}.npy')
+
+    if not os.path.isfile(path_save_preds) \
+            or not os.path.isfile(path_save_paths) \
+            or not os.path.isfile(path_save_labels):
+        print(f'{split_name} set')
+        res, preds, labels, paths = eval_loop(dataset_loader)
+        print_dict(res)
+        # save predictions to file
+        save_i(path_save_preds, preds)
+        save_i(path_save_labels, labels)
+        save_i(path_save_paths, paths)
+    else:
+        # load predictions from file
+        preds = np.load(path_save_preds)
+        labels = np.load(path_save_labels)
+        paths = np.load(path_save_paths)
+
+    return {'labels': labels, 'preds': preds, 'paths': paths}
 
 
 # def main():
@@ -158,20 +191,17 @@ if __name__ == '__main__':
         raise ValueError(f'Unknown dataset name {dataset_name}')
 
     ''' Initialization '''
-    print(f"Available GPUs: {torch.cuda.device_count()}")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f'Running on device: {device}')
-    print(f"Current device: {torch.cuda.current_device()}")
-    print(f"Device name: {torch.cuda.get_device_name(0)}")
+    # print(f"Available GPUs: {torch.cuda.device_count()}")
+    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
+    # print(f'Running on device: {device}')
+    # print(f"Current device: {torch.cuda.current_device()}")
+    # print(f"Device name: {torch.cuda.get_device_name(0)}")
 
     ''' Load Model '''
     model_name = config_dict['model_name']
-    # def load_model(model_name, weights, weight_class, num_classes): ...
-    from src.model_util import load_model
-
     model, preprocess = load_model(model_name, config_dict['num_classes'])
-
-    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt')), strict=False)
+    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt'), map_location=device), strict=False)
     model.to(device)
     model.eval()
 
@@ -215,46 +245,37 @@ if __name__ == '__main__':
     ''' Evaluation '''
     if False:
         print('Training set')
-        res_train, preds_train, labels_train = eval_loop(train_loader)
-        print_dict(res_train)
+        outputs_train = get_preds(train_loader, 'train', output_dir)
 
         print('Validation set')
-        res_val, preds_val, labels_val = eval_loop(val_loader)
-        print_dict(res_val)
+        outputs_val = get_preds(val_loader, 'val', output_dir)
 
-        path_save = join(output_dir, 'preds_test.npy')
-        if not os.path.isfile(path_save):
-            print('Test set')
-            res_test, preds_test, labels_test = eval_loop(test_loader)
-            print_dict(res_test)
-            # save predictions to file
-            save_i(path_save, preds_test)
-            save_i(join(output_dir, 'labels_test.npy'), labels_test)
-        else:
-            # load predictions from file
-            preds_test = np.load(join(output_dir, 'preds_test.npy'))
-            labels_test = np.load(join(output_dir, 'labels_test.npy'))
+        print('Test set')
+        outputs_test = get_preds(test_loader, 'test', output_dir)
 
-        metrics_test = compute_metrics(labels_test, preds_test)
+        metrics_test = compute_metrics(outputs_test['labels'], outputs_test['preds'])
         metrics_test = keys_append(metrics_test, ' Test')
 
-        mm = classification_report(labels_test, preds_test, output_dict=True)
-        print_dict(mm)
-        print(classification_report(labels_test, preds_test))
+        cr = classification_report(outputs_test['labels'], outputs_test['preds'])
+        print(cr)
 
         ''' Confusion matrix '''
-        label_names = dataset_module.label_names
+        label_names = dataset_module.label_names_unified
         if True:
             cm_location = join(output_dir, 'confusion_matrix.pdf')
-            confusion_matrix(labels_test, preds_test, output_location=cm_location, labels=label_names, show=True)
+            confusion_matrix(outputs_test['labels'], outputs_test['preds'], output_location=cm_location,
+                             labels=label_names, show=True)
 
             cm_binary_location = join(output_dir, 'confusion_matrix_binary.pdf')
             label_names_binary = ['genuine', 'attack']
-            preds_binary = preds_test != bona_fide
-            labels_binary = labels_test != bona_fide
+            preds_binary = outputs_test['preds'] != bona_fide
+            labels_binary = outputs_test['labels'] != bona_fide
 
             confusion_matrix(labels_binary, preds_binary, output_location=cm_binary_location, labels=label_names_binary,
                              show=True)
+
+
+
 
 ''' Explainability - GradCAM-like '''
 if False:
@@ -462,3 +483,24 @@ if False:
     plt.show()
 
     # weird - no GT "Video mac" + pred: "Printed still" is in the confusion matrix
+
+''' Embeddings '''
+if False:
+    if not hasattr(model, 'fw_with_emb'):
+        raise AttributeError('Model does not have fw_with_emb method')  # currently only for resnet18
+
+    sample = next(iter(train_loader))
+    imgs, labels, paths = sample['image'], sample['label'], sample['path']
+    with torch.no_grad():
+        preds, features = model.fw_with_emb(imgs.to(device))
+        preds = preds.cpu().numpy()
+        features = features.cpu().numpy()
+
+    # embeddings distance matrix
+    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.metrics.pairwise import euclidean_distances
+
+    # cosine similarity
+    cos_sim = cosine_similarity(features)
+    # euclidean distance
+    eucl_dist = euclidean_distances(features)

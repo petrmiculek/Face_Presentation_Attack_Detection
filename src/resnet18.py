@@ -331,6 +331,24 @@ class ResNet(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
 
+    def fw_with_emb(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        """ Return prediction and embedding """
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)  # x = embedding
+        y = self.fc(x)  # y = prediction
+
+        return y, x
+
 
 def _resnet(
         block: Type[Union[BasicBlock, Bottleneck]],
