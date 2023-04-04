@@ -1,11 +1,8 @@
 # stdlib
 import argparse
-import json
 import logging
 import os
-import datetime
 from os.path import join
-from copy import deepcopy
 
 # fix for local import problems - add all local directories
 import sys
@@ -14,20 +11,11 @@ sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdi
 sys.path.extend(sys_path_extension)
 
 # external
-import torch
 
-from sklearn.metrics import classification_report
-import matplotlib.pyplot as plt
-import numpy as np
 from tqdm import tqdm
-import pandas as pd
-import seaborn as sns
 
 os.environ["WANDB_SILENT"] = "true"
 
-import wandb as wb
-
-from PIL import Image
 import numpy as np
 import os
 import json
@@ -43,12 +31,10 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-import config
 # import dataset_rose_youtu as dataset
-from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, xor, keys_append, save_dict_json
+from metrics import compute_metrics  # , accuracy
+from util import print_dict, save_i
 from model_util import load_model
-import resnet18
 
 run_dir = ''
 # run_dir = 'runs/2023-01-10_14-41-03'  # 'unseen_attack'
@@ -77,17 +63,6 @@ parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, ru
 parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
 
 
-def save_i(path, file, overwrite=False):
-    """ Save but don't overwrite """
-    exists = os.path.exists(path)
-    if exists and not overwrite:
-        print(f'File {path} exists, skipping saving.')
-    else:
-        if exists:
-            print(f'File {path} exists, overwriting.')
-        np.save(path, file)
-
-
 def eval_loop(loader):
     """ Evaluate model on dataset """
     len_loader = len(loader)
@@ -98,22 +73,20 @@ def eval_loop(loader):
     with torch.no_grad():
         for sample in tqdm(loader, mininterval=1., desc='Eval'):
             img, label = sample['image'], sample['label']
+            labels.append(label)  # check if label gets mutated by .to() ...
+            paths.append(sample['path'])
+
             img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
             img_batch = preprocess(img)
             out = model(img_batch)
             loss = criterion(out, label)
             ep_loss += loss.item()
 
-            # compute accuracy
             prediction_hard = torch.argmax(out, dim=1)
-
             # save prediction
-            labels.append(label.cpu().numpy())
             preds.append(prediction_hard.cpu().numpy())
 
-            paths.append(sample['path'])
-
-    # loss is averaged over batch already, divide by batch number
+    # loss is averaged over batch already, divide by number of batches
     ep_loss /= len_loader
 
     metrics = compute_metrics(labels, preds)
@@ -131,23 +104,25 @@ def eval_loop(loader):
     return res_epoch, preds, labels, paths
 
 
-def get_preds(dataset_loader, split_name, output_dir):
+def get_preds(dataset_loader, split_name, output_dir, new=True, save=True):
     path_save_preds = join(output_dir, f'preds_{split_name}.npy')
     path_save_labels = join(output_dir, f'labels_{split_name}.npy')
     path_save_paths = join(output_dir, f'paths_{split_name}.npy')
 
-    if not os.path.isfile(path_save_preds) \
+    if new or not os.path.isfile(path_save_preds) \
             or not os.path.isfile(path_save_paths) \
             or not os.path.isfile(path_save_labels):
         print(f'{split_name} set')
         res, preds, labels, paths = eval_loop(dataset_loader)
         print_dict(res)
-        # save predictions to file
-        save_i(path_save_preds, preds)
-        save_i(path_save_labels, labels)
-        save_i(path_save_paths, paths)
+        if save:
+            # save predictions to file
+            save_i(path_save_preds, preds)
+            save_i(path_save_labels, labels)
+            save_i(path_save_paths, paths)
     else:
         # load predictions from file
+        print(f'Loading {split_name} set results from file')
         preds = np.load(path_save_preds)
         labels = np.load(path_save_labels)
         paths = np.load(path_save_paths)
@@ -191,12 +166,12 @@ if __name__ == '__main__':
         raise ValueError(f'Unknown dataset name {dataset_name}')
 
     ''' Initialization '''
-    # print(f"Available GPUs: {torch.cuda.device_count()}")
-    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    device = torch.device("cpu")
-    # print(f'Running on device: {device}')
-    # print(f"Current device: {torch.cuda.current_device()}")
-    # print(f"Device name: {torch.cuda.get_device_name(0)}")
+    print(f"Available GPUs: {torch.cuda.device_count()}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
+    print(f'Running on device: {device}')
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name(0)}")
 
     ''' Load Model '''
     model_name = config_dict['model_name']
@@ -240,7 +215,7 @@ if __name__ == '__main__':
         len_test_loader = len(test_loader)
 
         bona_fide = dataset_module.bona_fide
-        label_names = dataset_module.label_names
+        label_names = dataset_module.label_names_unified
 
     ''' Evaluation '''
     if False:
@@ -251,7 +226,7 @@ if __name__ == '__main__':
         outputs_val = get_preds(val_loader, 'val', output_dir)
 
         print('Test set')
-        outputs_test = get_preds(test_loader, 'test', output_dir)
+        outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=False)
 
         metrics_test = compute_metrics(outputs_test['labels'], outputs_test['preds'])
         metrics_test = keys_append(metrics_test, ' Test')
@@ -260,7 +235,6 @@ if __name__ == '__main__':
         print(cr)
 
         ''' Confusion matrix '''
-        label_names = dataset_module.label_names_unified
         if True:
             cm_location = join(output_dir, 'confusion_matrix.pdf')
             confusion_matrix(outputs_test['labels'], outputs_test['preds'], output_location=cm_location,
@@ -372,8 +346,8 @@ if False:
     plt.title(f'Original image')
     plt.axis('off')
 
-    gt_label_name = dataset_module.label_names[label_scalar]
-    pred_label_name = dataset_module.label_names[pred.argmax()]
+    gt_label_name = label_names[label_scalar]
+    pred_label_name = label_names[pred.argmax()]
 
     j = 0
     for name, cs in method_cams_dict.items():
@@ -443,9 +417,9 @@ if False:
 
     pred_top1 = explanation.top_labels[0]
 
-    nums_to_names = dataset_module.nums_to_names
+    nums_to_names = dataset_module.nums_to_unified
     pred_top1_name = nums_to_names[pred_top1]
-    label_name = dataset_module.label_names[label]
+    label_name = label_names[label]
 
     # positive-only
     temp, mask = explanation.get_image_and_mask(pred_top1, positive_only=True, num_features=5,
@@ -472,9 +446,9 @@ if False:
     fig, axs = plt.subplots(1, n_images, figsize=(10, 6))
     for i in range(n_images):
         label = labels[i].item()
-        label_str = dataset_module.label_names[label]
+        label_str = label_names[label]
         pred_class = preds_classes[i]
-        pred_class_str = dataset_module.label_names[pred_class]
+        pred_class_str = label_names[pred_class]
         img = imgs[i].cpu().numpy().transpose(1, 2, 0)
         axs[i].imshow(img)
         axs[i].set_title(f'GT: {label_str}' + f', pred: {pred_class_str}')
@@ -486,15 +460,69 @@ if False:
 
 ''' Embeddings '''
 if False:
+    """
+    A) Through forward hooks
+    - no necessity to modify model
+    B) Through forward method
+    - avoids __call__ method, might ignore other hooks
+    
+    Both ways currently work: either extracting it as a hook or through a special forward method
+    
+    """
+
     if not hasattr(model, 'fw_with_emb'):
         raise AttributeError('Model does not have fw_with_emb method')  # currently only for resnet18
 
-    sample = next(iter(train_loader))
-    imgs, labels, paths = sample['image'], sample['label'], sample['path']
+    ''' Extract embeddings through forward hooks '''
+    activation = {}
+
+
+    def get_activation(name):
+        def hook(model, inputs, outputs):
+            activation[name] = outputs.detach()
+
+        return hook
+
+
+    h1 = model.avgpool.register_forward_hook(get_activation('avgpool'))
+
+    ''' Eval loop '''
+    len_loader = len(test_loader)
+    ep_loss = 0.0
+    avgpools = []
+    preds = []
+    labels = []
+    paths = []
+    features = []
     with torch.no_grad():
-        preds, features = model.fw_with_emb(imgs.to(device))
-        preds = preds.cpu().numpy()
-        features = features.cpu().numpy()
+        for sample in tqdm(test_loader, mininterval=1., desc='Embeddings'):
+            img, label = sample['image'], sample['label']
+            labels.append(label)  # check if label gets mutated by .to() ...
+            paths.append(sample['path'])
+
+            img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
+            img_batch = preprocess(img)
+            out, feature = model.fw_with_emb(img_batch)
+
+            loss = criterion(out, label)
+            ep_loss += loss.item()
+
+            prediction_hard = torch.argmax(out, dim=1)
+            preds.append(prediction_hard.cpu().numpy())
+
+            avgpools.append(activation['avgpool'].cpu().numpy())
+            features.append(feature.cpu().numpy())
+
+    labels = np.concatenate(labels)
+    preds = np.concatenate(preds)
+    paths = np.concatenate(paths)
+    avgpools = np.concatenate(avgpools)[..., 0, 0]  # strip last 2 dimensions (N, C, 1, 1)
+    features = np.concatenate(features)
+
+    # loss is averaged over batch already, divide by number of batches
+    ep_loss /= len_loader
+
+    metrics = compute_metrics(labels, preds)
 
     # embeddings distance matrix
     from sklearn.metrics.pairwise import cosine_similarity

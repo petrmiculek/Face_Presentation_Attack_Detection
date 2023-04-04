@@ -88,12 +88,13 @@ genuine_num_unified = bona_fide_unified = 0
 attack_nums_unified = [1, 2, 3, 4]
 num_classes_unified = len(labels_unified)  # 5
 
-label_to_nums = dict(zip(labels.keys(), range(len(labels))))
-nums_to_names = dict(zip(range(len(labels)), labels.values()))
-label_names = list(labels.values())
-label_nums = list(label_to_nums.values())
 genuine_num = bona_fide = 0
-attack_nums = [1, 2, 3, 4, 5, 6, 7]
+''' Make use of old labels throw an error to prevent silent slipups '''
+# label_to_nums = dict(zip(labels.keys(), range(len(labels))))
+# nums_to_names = dict(zip(range(len(labels)), labels.values()))
+# label_names = list(labels.values())
+# label_nums = list(label_to_nums.values())
+# attack_nums = [1, 2, 3, 4, 5, 6, 7]
 # label_attack = list(label_to_nums.values())
 # label_attack.remove(label_genuine)
 

@@ -1,5 +1,5 @@
 # stdlib
-from os.path import join
+from os.path import join, exists
 
 # external
 from PIL import Image
@@ -21,6 +21,12 @@ class BaseDataset(Dataset):
     def __init__(self, annotations, transform=None):
         self.transform = transform
         self.samples = annotations
+
+        # test first file exists
+        sample = self.samples.iloc[0]
+        path = sample['path']
+        if not exists(path):
+            raise FileNotFoundError(f'Sample dataset file does not exist: {path} ')
 
     def __len__(self):
         return len(self.samples)

@@ -1,5 +1,6 @@
 # stdlib
 import json
+import os
 import time
 
 # external
@@ -108,3 +109,14 @@ def get_var_name(var, locals_foreigners):
             return k
 
     return 'unknown_var'
+
+
+def save_i(path, file, overwrite=False):
+    """ Save but don't overwrite """
+    exists = os.path.exists(path)
+    if exists and not overwrite:
+        print(f'File {path} exists, skipping saving.')
+    else:
+        if exists:
+            print(f'File {path} exists, overwriting.')
+        np.save(path, file)
