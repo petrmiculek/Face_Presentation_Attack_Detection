@@ -57,7 +57,7 @@ from src.resnet18 import resnet18
 
 
 def load_model(model_name, num_classes, seed=None):
-    # todo seed is not used
+    # todo seed is not used [func]
     if model_name == 'resnet18':
         # load model with pretrained weights
         weights = ResNet18_Weights.IMAGENET1K_V1

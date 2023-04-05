@@ -331,6 +331,7 @@ class ResNet(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
 
+    # not necessary if forward hooks are used
     def fw_with_emb(self, x: Tensor) -> tuple[Tensor, Tensor]:
         """ Return prediction and embedding """
         x = self.conv1(x)

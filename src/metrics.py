@@ -15,7 +15,7 @@ import seaborn as sns
 # -
 
 def compute_metrics(labels, preds, bona_fide=0):
-    # todo: separate binary evaluation from multiclass evaluation, add _binary suffix everywhere, check in W&B
+    # todo: separate binary evaluation from multiclass evaluation, add _binary suffix everywhere, check in W&B [clean]
     if type(labels) == list:
         labels = np.concatenate(labels)
     if type(preds) == list:
@@ -88,7 +88,8 @@ def compute_metrics(labels, preds, bona_fide=0):
 def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, show=True, **kwargs):
     """Create and show/save confusion matrix"""
 
-    model_name = kwargs.pop('model_name', 'UnnamedModel')  # todo add model_name to confMat and kwargs when calling it
+    model_name = kwargs.pop('model_name',
+                            'UnnamedModel')  # todo add model_name to confMat and kwargs when calling it [opt]
     normalize = kwargs.pop('normalize', False)
     title_suffix = kwargs.pop('title_suffix', '')
 

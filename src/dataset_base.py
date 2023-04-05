@@ -16,7 +16,7 @@ import numpy as np
 # -
 
 class BaseDataset(Dataset):
-    path_key = 'path_key'  # todo unused
+    path_key = 'path_key'  # todo unused [clean]
 
     def __init__(self, annotations, transform=None):
         self.transform = transform
@@ -67,6 +67,7 @@ def StandardLoader(dataset_class, annotations, **kwargs):
     num_workers = kwargs.pop('num_workers', 1)
     seed = kwargs.pop('seed', None)
     transform = kwargs.pop('transform', None)
+    drop_last = kwargs.pop('drop_last', True)
 
     def seed_worker(worker_id):
         """
@@ -85,7 +86,7 @@ def StandardLoader(dataset_class, annotations, **kwargs):
         'num_workers': num_workers,
         'batch_size': batch_size,
         'pin_memory': True,
-        'drop_last': True,
+        'drop_last': drop_last,
         'worker_init_fn': seed_worker,
         'shuffle': shuffle,
     }
@@ -120,7 +121,7 @@ def pick_dataset_version(name, mode):
     :param mode: training mode
     :return: metadata pandas series
     """
-    path_datasets_csv = join('dataset_lists', 'datasets.csv')  # todo make into a parameter
+    path_datasets_csv = join('dataset_lists', 'datasets.csv')  # todo make into a parameter [clean]
     datasets = pd.read_csv(path_datasets_csv)
     available = datasets[['dataset_name', 'training_mode']].values
 
@@ -165,7 +166,7 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kw
 
     :note: dataset_module used so that we don't import individual datasets here -> cycle
     """
-    # name = metadata_row['dataset_name']  # todo could reimport dataset module here
+    # name = metadata_row['dataset_name']  # todo could reimport dataset module here [clean]
     seed = loader_kwargs.pop('seed', None)
 
     # load annotations

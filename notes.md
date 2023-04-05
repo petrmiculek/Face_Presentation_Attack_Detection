@@ -163,6 +163,7 @@ consultation:
 * why is liveness solved by a separate model at the age of massive universal backbone, multitask networks, transfer
   learning/fine-tuning successes?
 * metacentrum - have you tried keeping a dataset in-memory? it's like flying
+* do you commonly use the original preprocessing
 
 low-prio:
 
@@ -177,6 +178,7 @@ low-prio:
   workers - also needs model fw-bw pass, as that is a bottleneck
 * union of dicts - is it order-dependent? key collisions
 * running dataset_split.py from the scripts folder will fail to import src.\*, handle that in the .sh script
+* save predictions/labels/paths through np.savez -> .npz, and possibly also compress them
 
 problems:
 
