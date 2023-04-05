@@ -12,7 +12,7 @@ import seaborn as sns
 
 # local
 # import config
-from dataset_rose_youtu import read_annotations, labels
+from dataset_rose_youtu import read_annotations, labels_orig
 
 
 def plot_category_counts_per_id(paths_all):
@@ -43,7 +43,7 @@ def plot_example_images(paths_all):
     sns.set_context('paper', font_scale=2)
     sns.set_palette('colorblind')  # does nothing
     fig, axs = plt.subplots(2, 4, figsize=(14, 9))
-    for i, label_num in enumerate(labels.values()):
+    for i, label_num in enumerate(labels_orig.values()):
         # get first image for each label
         try:
             img_path = paths_all[paths_all['label_num'] == i]['path'].iloc[

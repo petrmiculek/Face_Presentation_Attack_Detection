@@ -1,58 +1,61 @@
 doing:
 
-* seed - verify it is applied for the model weights (if not loading)
+* lime:
+    * just call it #DONE#
+    * generate many
+
+* seed:
+    * verify it is applied for the model weights (if not loading)
+    * should it be used for lime? (image segmentation into superpixels)
 
 * compare explanations of two different models
 
-* before running mass-generation of explanations, the evaluate-script needs argparsing
+* before running mass-generation of explanations, the evaluate-script needs argparsing #DONE#
 
 * changing paths to the dataset is tricky in:
-  * loading a dataset through the datasets.csv already says, where the dataset paths
-    are located. Even when changing the 'dataset_lists' path in dataset_base,
-    if the datasets.csv point to the original directory, nothing changes and old data paths are used.
-  * where are paths absolute and where relative: **TODO**
-    * dataset_base.py: dataset_lists
-    * dataset_split.py: dataset_root
-    * dataset_lists/datasets.csv ->
-    * dataset_lists/dataset_xyz.csv -> abs path to sample
-
-* lime:
-  * just call it #DONE#
-  * generate many
+    * loading a dataset through the datasets.csv already says, where the dataset paths
+      are located. Even when changing the 'dataset_lists' path in dataset_base,
+      if the datasets.csv point to the original directory, nothing changes and old data paths are used.
+    * where are paths absolute and where relative: **TODO**
+        * dataset_base.py: dataset_lists
+        * dataset_split.py: dataset_root
+        * dataset_lists/datasets.csv ->
+        * dataset_lists/dataset_xyz.csv -> abs path to sample
 
 * many-run script can create run_x.sh files + finished files
 
 ############################## HOT
 
 * input size of EfficientNet_v2_s is 384x384, whereas Resnet has 224x224
-  * transforms=partial(
-    ImageClassification,
-    crop_size=384,
-    resize_size=384,
-    interpolation=InterpolationMode.BILINEAR,
-    )
-  * things work fine, it's just that the resizing might be doing some unnecessary work
-  * what size are the input images?
-    ############################## HOT
+    * transforms=partial(
+      ImageClassification,
+      crop_size=384,
+      resize_size=384,
+      interpolation=InterpolationMode.BILINEAR,
+      )
+    * things work fine, it's just that the resizing might be doing some unnecessary work
+    * what size are the input images originally?
+
+############################## HOT
 
 * pred_hwc_np uses F.softmax - is it correct? Why is it not used in the training? What comes out of the model?
 * It should be easy to make EfficientNet produce its one-to-last layer embeddings.
 
 * rose_youtu has 'Genuine', siw-m has 'Live'
 * siw-m
-  * has negative category as 1 -> harder for binary labels
-  * has no 'label_bin' attribute
+    * has negative category as 1 -> harder for binary labels
+    * has no 'label_bin' attribute
 
 todo:
 
 * train with SIW-M dataset
-* dataset-independent train: test
+* dataset-independent train/eval
 * metriky: EER = equal error rate, HTER, AUC, XYZ@FRR10e-2
 * report real number of epochs trained + training time
 * training: one_attack, unseen_attack
 * one_attack training:
-  * check one-attack splitting in dataset_split (fill in "OK" table in dataset_split.py)
-  * regenerate one-attack datasets, with new attack splitting
+    * check one-attack splitting in dataset_split (fill in "OK" table in dataset_split.py)
+    * regenerate one-attack datasets, with new attack splitting
 * script: run training on every category separately TODO
 
 unseen_attack training:
@@ -65,21 +68,21 @@ ideas:
 * follow the evaluation protocol of SIW-M
 
 * rethinking classes:
-  * adapting rose_youtu #DONE#
-    * train again on metacentrum #DONE#
-  * adapt siw-m
-    'Makeup',
-    'Live',
-    'Paper',
-    'Mask_partial',
-    'Replay',
-    'Mask'
-    ->
-    'Genuine',
-    'Printed',
-    'Video',
-    'Mask',
-    'Other'
+    * adapting rose_youtu #DONE#
+        * train again on metacentrum #DONE#
+    * adapt siw-m
+      'Makeup',
+      'Live',
+      'Paper',
+      'Mask_partial',
+      'Replay',
+      'Mask'
+      ->
+      'Genuine',
+      'Printed',
+      'Video',
+      'Mask',
+      'Other'
 
 note:
 
@@ -116,21 +119,21 @@ done:
 * W&B #DONE#
 * confusion matrix #DONE#
   one_attack training:
-  * train genuine + one type of attack #DONE#
-  * binary predictions #DONE#
-  * shuffling the dataset #DONE#
-  * mixing genuine and attack data #DONE#
-    unseen_attack training:
-  * train genuine + 6/7 categories #DONE#
-  * test on the last category #DONE#
+    * train genuine + one type of attack #DONE#
+    * binary predictions #DONE#
+    * shuffling the dataset #DONE#
+    * mixing genuine and attack data #DONE#
+      unseen_attack training:
+    * train genuine + 6/7 categories #DONE#
+    * test on the last category #DONE#
 * print confmat full pandas dataframe (don't skip columns)  #DONE#
 * check model name saved -> load model in evaluate #DONE#
 * cache function calls (reading annotations?)  #SKIPPED#
 * I was evaluating the binary accuracy of the model #DONE#
-  * check if multi-class accuracy is reported now, and fed to W\&B #DONE#
+    * check if multi-class accuracy is reported now, and fed to W\&B #DONE#
 * Confusion matrix
-  * binary pdf has 2 legends and overwritten text #DONE#
-  * check that closing the figure fixes the text overwriting with multi-class and binary #DONE#
+    * binary pdf has 2 legends and overwritten text #DONE#
+    * check that closing the figure fixes the text overwriting with multi-class and binary #DONE#
 * return samples as dict to enable extending annotations to paths, identities, etc. #DONE#
 * saving model: make sure it can be re-initialized (seems to work for evaluate)  #DONE#
 * extract one-to-last layer embeddings (for t-SNE etc.)  #DONE#
@@ -151,12 +154,12 @@ done:
 inspiration:
 
 * CelebA spoof:
-  * (paper)
-    * evaluation metrics table
-    * schema of model inputs and outputs
+    * (paper)
+        * evaluation metrics table
+        * schema of model inputs and outputs
 
-  * (code)
-    * implementation of metrics: FRR@10-3 (intra_dataset_code/client.py)
+    * (code)
+        * implementation of metrics: FRR@10-3 (intra_dataset_code/client.py)
 
 consultation:
 
@@ -168,11 +171,11 @@ consultation:
 low-prio:
 
 * Weights\& Biases:
-  * profiling
-  * fix 'failed to sample metrics' error
-  * log plots there
+    * profiling
+    * fix 'failed to sample metrics' error
+    * log plots there
 * checkpoint also state of scheduler, optimizer, ... https://docs.wandb.ai/guides/track/advanced/resuming
-  * ^but separately from model weights, to load independently
+    * ^but separately from model weights, to load independently
 * extract common code parts from train/eval
 * rerun benchmark for training speed w.r.t. batch size and number of
   workers - also needs model fw-bw pass, as that is a bottleneck

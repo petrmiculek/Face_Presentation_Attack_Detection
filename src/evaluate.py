@@ -235,6 +235,7 @@ if __name__ == '__main__':
         from skimage.segmentation import mark_boundaries
         import matplotlib.pyplot as plt
 
+
         def convert_for_lime(img):
             return (img.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
 
@@ -294,7 +295,7 @@ if __name__ == '__main__':
         labels = []
         paths = []
         preds = []
-        i_file = 0
+        idxs = []
 
         lime_dir = join(output_dir, 'lime')
         os.makedirs(lime_dir, exist_ok=True)
@@ -302,8 +303,10 @@ if __name__ == '__main__':
         with torch.no_grad():
             for batch in tqdm(test_loader, mininterval=1., desc='Eval'):
                 img_batch, label = batch['image'], batch['label']
+                idx = batch['idx']
                 labels.append(label)  # check if label gets mutated by .to() ...
                 paths.append(batch['path'])
+                idxs.append(idx)
                 for i, img in tqdm(enumerate(img_batch), mininterval=1., desc='\tBatch', leave=False,
                                    total=len(img_batch)):
                     img_for_lime = convert_for_lime(img)
@@ -320,7 +323,7 @@ if __name__ == '__main__':
                     # positive-only
                     title = f'LIME explanation (pos), pred {pred_top1_name}, GT {label_name}'
                     lime_kwargs = {'positive_only': True, 'num_features': 5, 'hide_rest': False}
-                    output_path = join(lime_dir, f'{i_file}_pos.png')
+                    output_path = join(lime_dir, f'{idx[i]}_pos.png')
 
                     show_lime_image(explanation, img_for_lime, lime_kwargs, title, output_path=output_path)
                     # show_lime_image(explanation, img_for_lime, lime_kwargs, title, show=True)
@@ -328,17 +331,18 @@ if __name__ == '__main__':
                     # positive and negative
                     title = f'LIME explanation (pos+neg), pred {pred_top1_name}, GT {label_name}'
                     lime_kwargs = {'positive_only': False, 'num_features': 10, 'hide_rest': False}
-                    output_path = join(lime_dir, f'{i_file}_pos_neg.png')
+                    output_path = join(lime_dir, f'{idx[i]}_pos_neg.png')
 
                     show_lime_image(explanation, img_for_lime, lime_kwargs, title, output_path=output_path)
                     # show_lime_image(explanation, img_for_lime, lime_kwargs, title, show=True)
-                    i_file += 1
 
         labels = torch.cat(labels).numpy()
+        idxs = torch.cat(idxs).numpy()
         paths = np.concatenate(paths)
         preds = np.array(preds)
+        idxs = np.array(idxs)
 
-        np.savez(join(lime_dir, 'lime.npz'), labels=labels, paths=paths, preds=preds)
+        np.savez(join(lime_dir, 'lime.npz'), labels=labels, paths=paths, preds=preds, idxs=idxs)
         print(f'LIME explanations saved to {lime_dir}')
 
     ''' Evaluation '''
@@ -446,7 +450,7 @@ if __name__ == '__main__':
                     plt.imshow(c)
                     label_pred_score = f': {preds[i, j]:.2f}'
                     matches_label = f' (GT)' if j == label else ''
-                    plt.title(dataset_module.label_names[j] + label_pred_score + matches_label)
+                    plt.title(label_names[j] + label_pred_score + matches_label)
                     plt.axis('off')
                     # remove margin around image
                     # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)

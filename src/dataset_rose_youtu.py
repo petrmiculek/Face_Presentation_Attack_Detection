@@ -11,10 +11,9 @@ from matplotlib import pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 
-
-
 # local
 from dataset_base import BaseDataset, StandardLoader
+
 # import config
 
 """
@@ -30,7 +29,7 @@ Rose Youtu Dataset
 """
 name = 'rose_youtu'
 
-labels = {
+labels_orig = {
     'G': 'Genuine',  # bona-fide, no attack, 0
     'Ps': 'Printed still',
     'Pq': 'Printed quivering',
@@ -90,13 +89,13 @@ num_classes_unified = len(labels_unified)  # 5
 
 genuine_num = bona_fide = 0
 ''' Make use of old labels throw an error to prevent silent slipups '''
-# label_to_nums = dict(zip(labels.keys(), range(len(labels))))
-# nums_to_names = dict(zip(range(len(labels)), labels.values()))
-# label_names = list(labels.values())
-# label_nums = list(label_to_nums.values())
-# attack_nums = [1, 2, 3, 4, 5, 6, 7]
-# label_attack = list(label_to_nums.values())
-# label_attack.remove(label_genuine)
+label_to_nums_orig = dict(zip(labels_orig.keys(), range(len(labels_orig))))
+nums_to_names = dict(zip(range(len(labels_orig)), labels_orig.values()))
+label_names = list(labels_orig.values())
+label_nums = list(label_to_nums_orig.values())
+attack_nums = [1, 2, 3, 4, 5, 6, 7]
+label_attack = list(label_to_nums_orig.values())
+label_attack.remove(bona_fide)
 
 speaking = {
     'T': 'true',  # talking
@@ -160,7 +159,7 @@ def _read_annotations(path, samples_dir):
                                 'id0': int(s[1]),
                                 'label_bin': int(s[2]),
                                 'label_dir': label_dir,
-                                'label_orig': label_to_nums[label_text],
+                                'label_orig': label_to_nums_orig[label_text],
                                 'label_unif': labels_to_unified_num[label_text],
                                 **info})
             else:
@@ -204,6 +203,7 @@ def read_annotations(which='genuine', use_as_label=None):
             annotations['label'] = annotations[use_as_label]
 
         return annotations
+
 
 def info_from_filename(filename):
     """
@@ -250,7 +250,8 @@ if __name__ == '__main__':
     genuine_ds = Dataset(paths_genuine)
 
     # show first image
-    img, label = genuine_ds[0]
+    sample = genuine_ds[0]
+    img, label = sample['image'], sample['label']
     plt.imshow(img)
     plt.title(f'Training image no. 0, label: {label}')
     plt.show()
@@ -260,9 +261,6 @@ if __name__ == '__main__':
     paths_attacks = read_annotations('attack', 'label_unif')
     attack_loader = Loader(paths_attacks, batch_size=4)
 
-    imgs, ys = next(iter(genuine_loader))
+    sample = next(iter(genuine_loader))
+    imgs, ys = sample['image'], sample['label']
     print(imgs.shape, ys.shape)
-
-    if False:
-        cm = np.random.randint(0, 1000, (8, 8))
-        pcm = pd.DataFrame(cm, columns=label_names)

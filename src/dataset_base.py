@@ -40,7 +40,8 @@ class BaseDataset(Dataset):
         sample_dict = {
             'image': image,
             'label': sample['label'],
-            'path': sample['path']
+            'path': sample['path'],
+            'idx': sample['idx']
         }
 
         return sample_dict
@@ -173,6 +174,11 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
     paths_train = pd.read_csv(metadata_row['path_train'])
     paths_val = pd.read_csv(metadata_row['path_val'])
     paths_test = pd.read_csv(metadata_row['path_test'])
+
+    # add index column "idx"
+    paths_train['idx'] = paths_train.index
+    paths_val['idx'] = paths_val.index
+    paths_test['idx'] = paths_test.index
 
     num_classes = int(metadata_row['num_classes'])
 
