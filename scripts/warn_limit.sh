@@ -1,5 +1,6 @@
 #!/bin/bash
 # go through all .py files line by line, and warn if a line contains "limit = \d+"
+# useful as a pre-commit hook
 
 # get all .py files
 files=`find ../src -name "*.py"`
