@@ -220,8 +220,6 @@ if __name__ == '__main__':
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
 
-        limit = 4  # -1 for full dataset
-
         loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
                          'drop_last': False}  # , 'transform': preprocess <- not used on purpose
         train_loader, val_loader, test_loader = \

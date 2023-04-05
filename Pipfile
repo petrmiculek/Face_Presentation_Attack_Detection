@@ -19,6 +19,7 @@ grad-cam = "*"
 lime = "*"
 scikit-image = "*"
 jupyter = "*"
+mypy = "*"
 
 [dev-packages]
 

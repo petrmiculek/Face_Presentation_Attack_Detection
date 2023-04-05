@@ -146,7 +146,7 @@ def pick_dataset_version(name, mode):
     return datasets.iloc[0]
 
 
-def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kwargs):
+def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_kwargs):
     """
     Load dataset from metadata.
 
@@ -185,7 +185,8 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=True, **loader_kw
         paths_test = paths_test.sample(frac=1, random_state=seed).reset_index(drop=True)
 
         # limit dataset size
-        print(f'Limiting dataset (each split) to {limit} samples.')
+        if not quiet:
+            print(f'Limiting dataset (each split) to {limit} samples.')
         paths_train = paths_train[:limit]
         paths_val = paths_val[:limit]
         paths_test = paths_test[:limit]
