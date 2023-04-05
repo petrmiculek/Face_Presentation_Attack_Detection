@@ -234,7 +234,6 @@ if __name__ == '__main__':
         from lime import lime_image
         from skimage.segmentation import mark_boundaries
         import matplotlib.pyplot as plt
-        limit = 8
 
         def convert_for_lime(img):
             return (img.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
