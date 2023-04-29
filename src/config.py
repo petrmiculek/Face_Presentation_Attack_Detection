@@ -11,3 +11,5 @@ HPARAMS = {
     'lr_scheduler_min_lr': 1e-6,
     'lr_scheduler_factor': 0.5,
 }
+
+seed_eval_default = 42

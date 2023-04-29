@@ -7,6 +7,8 @@ doing:
 * seed:
     * verify it is applied for the model weights (if not loading)
     * should it be used for lime? (image segmentation into superpixels)
+        * yes, but increment the seed between calls? or maybe don't
+    * hinch: there will be differences with varying num_workers
 
 * compare explanations of two different models
 
@@ -31,15 +33,14 @@ doing:
       ImageClassification,
       crop_size=384,
       resize_size=384,
-      interpolation=InterpolationMode.BILINEAR,
-      )
+      interpolation=InterpolationMode.BILINEAR,)
     * things work fine, it's just that the resizing might be doing some unnecessary work
     * what size are the input images originally?
 
 ############################## HOT
 
 * pred_hwc_np uses F.softmax - is it correct? Why is it not used in the training? What comes out of the model?
-* It should be easy to make EfficientNet produce its one-to-last layer embeddings.
+* Check EfficientNet embeddings.
 
 * rose_youtu has 'Genuine', siw-m has 'Live'
 * siw-m

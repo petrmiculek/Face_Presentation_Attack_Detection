@@ -40,6 +40,7 @@ pil_logger.setLevel(logging.INFO)
 from metrics import compute_metrics, confusion_matrix  # , accuracy
 from util import print_dict, save_i, keys_append
 from model_util import load_model
+import config
 
 run_dir = ''
 # run_dir = 'runs/2023-01-10_14-41-03'  # 'unseen_attack'
@@ -64,16 +65,17 @@ parser.add_argument('-w', '--num_workers', help='number of workers', type=int, d
 # parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
 # parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)',
 #                     type=str, default=None)
+parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
+parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 # parser.add_argument('-d', '--dataset', help='dataset to evaluate on', type=str, default=None)
 parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
 parser.add_argument('-l', '--lime', help='generate LIME outputs', action='store_true')
 parser.add_argument('-c', '--cam', help='generate CAM outputs', action='store_true')
 parser.add_argument('-v', '--eval', help='run evaluation loop', action='store_true')
 parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
-parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
 
 
-# ^ the 4 above are so far considered exclusive, although not enforced to be so
+# ^ the 4 above (lime, cam, eval, emb) are so far considered exclusive, although not enforced to be so
 
 
 def eval_loop(loader):
@@ -207,6 +209,11 @@ if __name__ == '__main__':
     print(f"Current device: {torch.cuda.current_device()}")
     print(f"Device name: {torch.cuda.get_device_name(0)}")
 
+    seed = args.seed if args.seed else config.seed_eval_default
+    print(f'Random seed: {seed}')
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
     model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir)
 
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
@@ -221,7 +228,7 @@ if __name__ == '__main__':
         attack_test = dataset_meta['attack_test']
 
         loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
-                         'drop_last': False}  # , 'transform': preprocess <- not used on purpose
+                         'seed': seed, 'drop_last': False}  # , 'transform': preprocess <- not used on purpose
         train_loader, val_loader, test_loader = \
             load_dataset(dataset_meta, dataset_module, limit=limit, quiet=False, **loader_kwargs)
 
