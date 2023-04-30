@@ -6,3 +6,12 @@
 .idea
 __pycache__
 */__pycache__
+dataset_lists*
+data
+images_plots
+lime-demo-run
+config*
+.mypy_cache
+notebooks
+*.lock
+

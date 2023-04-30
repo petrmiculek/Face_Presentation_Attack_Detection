@@ -39,6 +39,9 @@ done
 pip install lime
 
 
+CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime --limit 4 -w 1
+
+
 # example output:
 # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_test_all_attacks.csv >dataset_lists/test
 # mv dataset_lists/test dataset_lists/dataset_rose_youtu_test_all_attacks.csv

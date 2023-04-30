@@ -88,11 +88,11 @@ if __name__ == '__main__':
     print_dict(args_dict, 'Args')  # potentially print dict of vars(config)
 
     ''' (Random) seed '''
-    # up to max integer
     seed = args.seed if args.seed else np.random.randint(0, 2 ** 32 - 1)
     print(f'Random seed: {seed}')
     np.random.seed(seed)
     torch.manual_seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
     # torch.backends.cudnn.deterministic = True  # can this make things fail?
 

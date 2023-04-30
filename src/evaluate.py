@@ -213,6 +213,7 @@ if __name__ == '__main__':
     print(f'Random seed: {seed}')
     np.random.seed(seed)
     torch.manual_seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
     model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir)
 
@@ -297,7 +298,7 @@ if __name__ == '__main__':
 
         nums_to_names = dataset_module.nums_to_unified
 
-        explainer = lime_image.LimeImageExplainer()
+        explainer = lime_image.LimeImageExplainer(random_state=seed)
 
         labels = []
         paths = []
@@ -319,7 +320,7 @@ if __name__ == '__main__':
                     img_for_lime = convert_for_lime(img)
                     explanation = explainer.explain_instance(img_for_lime, predict_lime, batch_size=16,
                                                              top_labels=1, hide_color=0, num_samples=1000,
-                                                             progress_bar=False)
+                                                             progress_bar=False, random_seed=seed)
 
                     pred_top1 = explanation.top_labels[0]
                     preds.append(pred_top1)
