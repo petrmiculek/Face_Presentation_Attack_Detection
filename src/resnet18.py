@@ -6,7 +6,7 @@ Source: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py
 """
 
 from functools import partial
-from typing import Any, Callable, List, Optional, Type, Union
+from typing import Optional, Union, Dict, Any, Type, List, Callable, TypeVar, Tuple
 
 import torch
 import torch.nn as nn
@@ -17,7 +17,6 @@ from torch import Tensor
 # from ._api import register_model, Weights, WeightsEnum
 # from ._meta import _IMAGENET_CATEGORIES
 # from ._utils import _ovewrite_named_param, handle_legacy_interface
-from typing import Optional, Union, Dict, Any, Type, List, Callable, TypeVar
 
 # W = TypeVar("W", bound=WeightsEnum)
 M = TypeVar("M", bound=nn.Module)
@@ -332,7 +331,7 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
     # not necessary if forward hooks are used
-    def fw_with_emb(self, x: Tensor) -> tuple[Tensor, Tensor]:
+    def fw_with_emb(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """ Return prediction and embedding """
         x = self.conv1(x)
         x = self.bn1(x)

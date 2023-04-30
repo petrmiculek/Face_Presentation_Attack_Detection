@@ -36,7 +36,8 @@ done
 #	echo "perl -pe 's|\Q$FIND\E|$SCRATCHDIR|g' $file">
 #done
 
-exit 0
+pip install lime
+
 
 # example output:
 # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_test_all_attacks.csv >dataset_lists/test
