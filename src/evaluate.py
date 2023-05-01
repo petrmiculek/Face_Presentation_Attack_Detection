@@ -2,26 +2,22 @@
 import argparse
 import logging
 import os
+import json
+import sys
 import time
 from os.path import join
 
 # fix for local import problems - add all local directories
-import sys
-
-from sklearn.metrics import classification_report
-
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
 
 # external
-
+from sklearn.metrics import classification_report
 from tqdm import tqdm
 
 os.environ["WANDB_SILENT"] = "true"
 
 import numpy as np
-import os
-import json
 
 import torch
 import torch.nn.functional as F
@@ -61,7 +57,7 @@ criterion = None
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, run explanation methods'
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=None)
-parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
+parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=None)
 # parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
 # parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)',
 #                     type=str, default=None)
@@ -73,6 +69,7 @@ parser.add_argument('-l', '--lime', help='generate LIME outputs', action='store_
 parser.add_argument('-c', '--cam', help='generate CAM outputs', action='store_true')
 parser.add_argument('-v', '--eval', help='run evaluation loop', action='store_true')
 parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
+parser.add_argument('-z', '--show', help='show outputs', action='store_true')
 
 
 # ^ the 4 above (lime, cam, eval, emb) are so far considered exclusive, although not enforced to be so
@@ -171,6 +168,7 @@ if __name__ == '__main__':
     
     """
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
+    print('Args:', ' '.join(sys.argv))
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     run_dir = args.run
     # read setup from run folder
@@ -236,6 +234,8 @@ if __name__ == '__main__':
         bona_fide = dataset_module.bona_fide
         label_names = dataset_module.label_names_unified
 
+    t0 = time.perf_counter()
+
     ''' LIME - Generate explanations for dataset split/s '''
     if args.lime:
         print('Generating LIME explanations')
@@ -267,7 +267,7 @@ if __name__ == '__main__':
 
             img0 = img0.permute(0, 3, 1, 2).to(device)
             with torch.no_grad():
-                img0 = preprocess(img0)  # not necessary since loader preprocesses
+                img0 = preprocess(img0)  # not necessary since loader preprocesses  (old comment)
                 logits = model(img0)
                 probs = F.softmax(logits, dim=1)
                 res = probs.cpu().numpy()
@@ -392,117 +392,157 @@ if __name__ == '__main__':
         from pytorch_grad_cam.utils.image import show_cam_on_image
         import seaborn as sns
 
+        methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
 
         target_layers = [model.layer4[-1]]
 
-        sample = next(iter(train_loader))
-        imgs, labels = sample['image'], sample['label']
-        with torch.no_grad():
-            preds_raw = model.forward(imgs.to(device)).cpu()
-            preds = F.softmax(preds_raw, dim=1).numpy()
-            preds_classes = preds.argmax(axis=1)
+        labels_list = []
+        paths_list = []
+        preds_list = []
+        idxs_list = []
+        cams_all = dict()
 
-        # for i, _ in enumerate(imgs):
-        i = 0
-        # attempt to get a correct prediction
-        while preds[i].argmax() != labels[i]:
-            try:
-                i += 1
-                img = imgs[i:i + 1]
-                label = labels[i:i + 1]
+        nums_to_names = dataset_module.nums_to_unified
+
+        ''' Iterate over batches in dataset '''
+        for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
+            img_batch, label = batch['image'], batch['label']
+            img_batch, label_batch = batch['image'], batch['label']
+            path_batch = batch['path']
+            with torch.no_grad():
+                # todo preprocess
+                img_batch_p = preprocess(img_batch)
+                preds_raw = model(img_batch_p.to(device)).cpu()
+                preds = F.softmax(preds_raw, dim=1).numpy()
+                preds_classes = preds.argmax(axis=1)
+
+            ''' Iterate over images in batch '''
+            labels_list.append(label_batch)
+            paths_list.append(path_batch)
+            idxs_list.append(batch['idx'])
+            for i, img in enumerate(
+                    img_batch):  # tqdm(..., mininterval=2., desc='\tBatch', leave=False, total=len(img_batch)):
+
                 pred = preds[i]
-            except Exception as e:
-                print(e)
-        print(f'Using image {i} with label {label} and prediction {pred}')
+                idx = batch['idx'][i].item()
+                label = label_batch[i].item()
 
-        # img, label = imgs[i:i + 1], labels[i:i + 1]  # img 4D, label 1D
-        label_scalar = label[0].item()  # label 0D
-        img_np = img[0].cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+                # img, label = img_batch[i:i + 1], label_batch[i:i + 1]  # img 4D, label 1D
+                img_np = img.cpu().numpy().transpose(1, 2, 0)  # img_np 3D
+                # img_np_batch = img_batch.cpu().numpy().transpose(0, 2, 3, 1)  # img_np 4D
 
-        methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
-        method_cams_dict = {}
-        for method in tqdm(methods, desc='CAM methods', mininterval=1):
-            method_name = method.__name__
+                img_cams = {}
 
-            grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
+                for method in methods:  # tqdm(..., desc='CAM methods', mininterval=1, leave=False):
 
-            targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
+                    # todo methods could be loaded outside the loop
+                    method_name = method.__name__
+                    grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
 
-            cams = []
-            overlayed = []
-            for k, t in enumerate(targets):
-                grayscale_cam = grad_cam(input_tensor=img, targets=[t])  # img 4D
+                    targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
 
-                # In this example grayscale_cam has only one image in the batch:
-                grayscale_cam = grayscale_cam[0, ...]  # -> 3D
+                    # explanations by class (same method)
+                    cams = []
+                    overlayed = []
+                    for k, t in enumerate(targets):
+                        grayscale_cam = grad_cam(input_tensor=img[None, ...], targets=[t])  # img 4D
 
-                visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
-                cams.append(grayscale_cam)
-                overlayed.append(visualization)
+                        # In this example grayscale_cam has only one image in the batch:
+                        grayscale_cam = grayscale_cam[0, ...]  # -> 3D
 
-            method_cams_dict[method_name] = {'cams': cams, 'overlayed': overlayed}
+                        visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
+                        cams.append(grayscale_cam)
+                        overlayed.append(visualization)
 
-            if False:
+                    img_cams[method_name] = {'cams': cams, 'overlayed': overlayed}
+
+                    if True:
+                        ''' Plot CAMs '''
+                        # explanation by class (same method)
+                        sns.set_context('poster')
+                        fig, axs = plt.subplots(2, 3, figsize=(20, 16))
+                        plt.subplot(2, 3, 1)
+                        plt.imshow(img_np)
+                        plt.title('Original image')
+                        plt.axis('off')
+
+                        for j, c in enumerate(overlayed):
+                            plt.subplot(2, 3, j + 2)
+                            plt.imshow(c)
+                            label_pred_score = f': {preds[i, j]:.2f}'
+                            matches_label = f' (GT)' if j == label else ''
+                            plt.title(label_names[j] + label_pred_score + matches_label)
+                            plt.axis('off')
+                            # remove margin around image
+                            # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+                        plt.tight_layout()
+
+                        if args.show:
+                            plt.show()
+
+                        # save figure fig to path
+                        path = join(cam_dir, f'{method_name}_{dataset_name}_img{idx}_gt{label}.png')
+                        fig.savefig(path, bbox_inches='tight', pad_inches=0)
+
+                        # close figure
+                        plt.close(fig)
+
+                    # end of cam methods loop
+
+                cams_all[idx] = img_cams
+
                 ''' Plot CAMs '''
-                sns.set_context('poster')
-                fig, axs = plt.subplots(3, 3, figsize=(20, 20))
-                plt.subplot(3, 3, 1)
-                plt.imshow(img_np)
-                plt.title('Original image')
-                plt.axis('off')
-
-                for j, c in enumerate(overlayed):
-                    plt.subplot(3, 3, j + 2)
-                    plt.imshow(c)
-                    label_pred_score = f': {preds[i, j]:.2f}'
-                    matches_label = f' (GT)' if j == label else ''
-                    plt.title(label_names[j] + label_pred_score + matches_label)
+                if True:
+                    # explanation by method (predicted class)
+                    sns.set_context('poster')
+                    fig, axs = plt.subplots(3, 3, figsize=(20, 20))
+                    plt.subplot(3, 3, 1)
+                    plt.imshow(img_np)
+                    plt.title(f'Original image')
                     plt.axis('off')
-                    # remove margin around image
-                    # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-                plt.tight_layout()
-                # plt.show()
+                    gt_label_name = label_names[label]
+                    pred_label_name = label_names[pred.argmax()]
 
-                # save figure fig to path
-                path = join(cam_dir, f'{method_name}_{dataset_name}_img{i}_gt{label_scalar}.png')
-                fig.savefig(path, bbox_inches='tight', pad_inches=0)
+                    j = 0
+                    for name, cs in img_cams.items():
+                        c = cs['overlayed'][label]
+                        plt.subplot(3, 3, j + 2)
+                        plt.imshow(c)
+                        plt.title(name)
+                        plt.axis('off')
+                        # remove margin around image
+                        # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                        j += 1
 
-        # end of cam methods loop
+                    plt.suptitle(f'CAM Methods Comparison, GT: "{gt_label_name}" pred: {pred_label_name}')
+                    plt.tight_layout()
 
-        ''' Plot CAMs '''
-        sns.set_context('poster')
-        fig, axs = plt.subplots(3, 3, figsize=(20, 20))
-        plt.subplot(3, 3, 1)
-        plt.imshow(img_np)
-        plt.title(f'Original image')
-        plt.axis('off')
+                    # save figure fig to path
+                    path = join(cam_dir, f'cam-comparison-gt{label}-rose_youtu.pdf')
+                    fig.savefig(path, bbox_inches='tight', pad_inches=0)
+                    if args.show:
+                        plt.show()
 
-        gt_label_name = label_names[label_scalar]
-        pred_label_name = label_names[pred.argmax()]
+                    plt.close(fig)
 
-        j = 0
-        for name, cs in method_cams_dict.items():
-            c = cs['overlayed'][label_scalar]
-            plt.subplot(3, 3, j + 2)
-            plt.imshow(c)
-            label_pred_score = f': {preds[i, j]:.2f}'  # type: ignore
-            matches_label = f' (GT)' if j == label_scalar else ''
-            plt.title(name)
-            plt.axis('off')
-            # remove margin around image
-            # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-            j += 1
+                # end of images in batch loop
+            # end of batches in dataset loop
+        # end of CAM methods section
 
-        plt.suptitle(f'CAM Methods Comparison, "{gt_label_name}" class')
-        plt.tight_layout()
+        labels_list = np.concatenate(labels_list)
+        paths_list = np.concatenate(paths_list)
+        idxs_list = np.concatenate(idxs_list)
 
-        # save figure fig to path
-        path = join(cam_dir, f'cam-comparison-gt{label_scalar}-rose_youtu.pdf')
-        fig.savefig(path, bbox_inches='tight', pad_inches=0)
-        plt.show()
+        ''' Save CAMs npz '''
+        maybe_limit = f'_limit{limit}' if limit else ''
+        path = join(cam_dir, f'cams_{dataset_name}{maybe_limit}.npz')
+        np.savez(path, cams_all=cams_all, labels=labels_list, paths=paths_list, idxs=idxs_list)
+        print(f'Saved CAMs to {path}')
 
     ''' Embeddings '''
     if args.emb:
@@ -593,3 +633,6 @@ if __name__ == '__main__':
         for a 7k dataset, cosine similarity takes 1.5s, euclidean distance 2.5s
         for a 50k+ dataset, we might wait a bit
         """
+
+    t1 = time.perf_counter()
+    print(f'Execution finished in {t1 - t0:.2f}s')  # everything after dataset is loaded
