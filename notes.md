@@ -1,5 +1,9 @@
 doing:
 
+* augmentations  #DONE#
+
+* gradient accummulation  #DONE#
+
 * lime:
     * just call it #DONE#
     * generate many
@@ -7,7 +11,7 @@ doing:
 * seed:
     * verify it is applied for the model weights (if not loading)
     * should it be used for lime? (image segmentation into superpixels)
-        * yes, but increment the seed between calls? or maybe don't
+        * yes, but increment the seed between calls? or maybe don't  #NO#
     * hinch: there will be differences with varying num_workers
 
 * compare explanations of two different models
@@ -147,10 +151,11 @@ done:
 * re-name categories to use only main ones (mask, printed, video, etc.) (adapt RoseYoutu to SIW-M)  #DONE#
 * if all_attacks, report the binary metrics (or always binary and for some modes it will be the same as "non-binary")
   #DONE#
-
-* possibly include out-of-distribution data for testing? #REJECT#
+*
 
 #DONE# #DONE# #DONE#
+
+* possibly include out-of-distribution data for testing? #REJECT#
 
 inspiration:
 

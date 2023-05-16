@@ -1,7 +1,7 @@
 """
     :filename model_util.py (originally EarlyStopping.py)
 
-    :brief EarlyStopping class file.
+    Early Stopping adapted from: vvvvvvv
 
     Early stopping is used to avoid overfitting of the model.
     As the PyTorch library does not contain built-in early stopping, this class is from following repository:
@@ -35,15 +35,6 @@
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
-
-    :author Tibor Kubik
-    :author Petr Miculek
-
-    :email xkubik34@stud.fit.vutbr.cz
-    :email xmicul08@stud.fit.vutbr.cz
-
-    File was created as a part of project 'Image super-resolution for rendered volumetric data' for POVa/2021Z course
-    at the Brno University of Technology.
 """
 
 import torch
@@ -54,6 +45,7 @@ from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
 # local
 from src.resnet18 import resnet18
+from src.augmentation import ClassificationPresetTrain, ClassificationPresetEval
 
 
 def load_model(model_name, num_classes, seed=None):
@@ -64,7 +56,7 @@ def load_model(model_name, num_classes, seed=None):
         model = resnet18(weights=weights, weight_class=ResNet18_Weights)
         # replace last layer with n-ary classification head
         model.fc = torch.nn.Linear(512, num_classes, bias=True)
-        preprocess = weights.transforms()
+        transforms_orig = weights.transforms()
     elif model_name == 'efficientnet_v2_s':
         weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
         model = efficientnet_v2_s(weights=weights,
@@ -75,9 +67,21 @@ def load_model(model_name, num_classes, seed=None):
             torch.nn.Linear(1280, num_classes),
         )
 
-        preprocess = weights.transforms()
+        transforms_orig = weights.transforms()
     else:
         raise ValueError(f'Unknown model name {model_name}')
+
+    crop_size = transforms_orig.crop_size[0]
+    resize_size = transforms_orig.resize_size[0]
+    transform_train = ClassificationPresetTrain(auto_augment_policy='ta_wide', random_erase_prob=0.5,
+                                                crop_size=crop_size)
+    transform_eval = ClassificationPresetEval(crop_size=crop_size, resize_size=resize_size)
+    preprocess = {
+        'crop_size': crop_size,
+        'resize_size': resize_size,
+        'train': transform_train,
+        'eval': transform_eval,
+    }
     return model, preprocess
 
 

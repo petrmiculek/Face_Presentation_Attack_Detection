@@ -169,6 +169,11 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
     """
     # name = metadata_row['dataset_name']  # todo could reimport dataset module here [clean]
     seed = loader_kwargs.pop('seed', None)
+    if 'transform' in loader_kwargs:
+        transform_train = transform_eval = loader_kwargs.pop('transform')
+    else:
+        transform_train = loader_kwargs.pop('transform_train', None)
+        transform_eval = loader_kwargs.pop('transform_eval', None)
 
     # load annotations
     paths_train = pd.read_csv(metadata_row['path_train'])
@@ -213,8 +218,9 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
             print(f'{split}:', class_occurences)
 
     # data loaders
-    loader_train = dataset_module.Loader(paths_train, seed=seed, **loader_kwargs, shuffle=shuffle)
-    loader_val = dataset_module.Loader(paths_val, seed=seed, **loader_kwargs)
-    loader_test = dataset_module.Loader(paths_test, seed=seed, **loader_kwargs)
+    loader_train = dataset_module.Loader(paths_train, seed=seed, transform=transform_train, **loader_kwargs,
+                                         shuffle=shuffle)
+    loader_val = dataset_module.Loader(paths_val, seed=seed, transform=transform_eval, **loader_kwargs)
+    loader_test = dataset_module.Loader(paths_test, seed=seed, transform=transform_eval, **loader_kwargs)
 
     return loader_train, loader_val, loader_test

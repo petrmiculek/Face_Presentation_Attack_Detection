@@ -199,7 +199,8 @@ if __name__ == '__main__':
         attack_test = dataset_meta['attack_test']
         limit = -1  # -1 for no limit
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
-                         'pin_memory': True, 'seed': seed, 'transform': preprocess}
+                         'pin_memory': True, 'seed': seed,
+                         'transform_train': preprocess['train'], 'transform_eval': preprocess['eval']}
         train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
                                                              quiet=False, **loader_kwargs)
         bona_fide = dataset_module.bona_fide_unified
@@ -261,8 +262,7 @@ if __name__ == '__main__':
             with tqdm(train_loader, mininterval=1., desc=f'ep{epoch} train') as progress_bar:
                 for i, sample in enumerate(progress_bar, start=1):
                     img, label = sample['image'], sample['label']
-                    img = img.to(device,
-                                 non_blocking=True)  # should transfer to gpu happen in autocast?  # preprocess(img)
+                    img = img.to(device, non_blocking=True)  # should transfer to gpu happen in autocast?
                     label = label.to(device, non_blocking=True)
 
                     with autocast(device_type='cuda', dtype=torch.float16):

@@ -51,6 +51,8 @@ device = None
 preprocess = None
 criterion = None
 
+transform_train = None
+transform_eval = None
 ''' Global variables '''
 # -
 
@@ -89,7 +91,6 @@ def eval_loop(loader):
             paths.append(sample['path'])
 
             img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-            img = preprocess(img)  # todo check ok after preprocess re-added here (ditto other occurences) [func]
             out = model(img)
             loss = criterion(out, label)
             ep_loss += loss.item()
@@ -117,6 +118,15 @@ def eval_loop(loader):
 
 
 def get_preds(dataset_loader, split_name, output_dir, new=True, save=True):
+    """
+    Get predictions for a dataset split -- load from file or run eval loop.
+    :param dataset_loader:
+    :param split_name:
+    :param output_dir:
+    :param new: create new predictions (run eval loop)
+    :param save: save newly created predictions
+    :return:
+    """
     path_save_preds = join(output_dir, f'preds_{split_name}.npy')
     path_save_labels = join(output_dir, f'labels_{split_name}.npy')
     path_save_paths = join(output_dir, f'paths_{split_name}.npy')
@@ -124,7 +134,7 @@ def get_preds(dataset_loader, split_name, output_dir, new=True, save=True):
     if new or not os.path.isfile(path_save_preds) \
             or not os.path.isfile(path_save_paths) \
             or not os.path.isfile(path_save_labels):
-        print(f'{split_name} set')
+        print(f'Evaluating on: {split_name} set')
         res, preds, labels, paths = eval_loop(dataset_loader)
         print_dict(res)
         if save:
@@ -214,6 +224,7 @@ if __name__ == '__main__':
     os.environ['PYTHONHASHSEED'] = str(seed)
 
     model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir)
+    print(f'Model: {config_dict["model_name"]} with {config_dict["num_classes"]} classes')
 
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
 
@@ -227,7 +238,9 @@ if __name__ == '__main__':
         attack_test = dataset_meta['attack_test']
 
         loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
-                         'seed': seed, 'drop_last': False}  # , 'transform': preprocess <- not used on purpose
+                         'seed': seed, 'drop_last': False,
+                         'transform_train': preprocess['eval'], 'transform_eval': preprocess['eval']}
+        #                                               ^^^^ note: eval transform is used for both train and test
         train_loader, val_loader, test_loader = \
             load_dataset(dataset_meta, dataset_module, limit=limit, quiet=False, **loader_kwargs)
 
@@ -267,7 +280,6 @@ if __name__ == '__main__':
 
             img0 = img0.permute(0, 3, 1, 2).to(device)
             with torch.no_grad():
-                img0 = preprocess(img0)  # not necessary since loader preprocesses  (old comment)
                 logits = model(img0)
                 probs = F.softmax(logits, dim=1)
                 res = probs.cpu().numpy()
@@ -355,13 +367,13 @@ if __name__ == '__main__':
 
     ''' Evaluation '''
     if args.eval:
-        print('Training set')
-        outputs_train = get_preds(train_loader, 'train', output_dir)
+        ''' Training set '''
+        # outputs_train = get_preds(train_loader, 'train', output_dir, new=True, save=False)
 
-        print('Validation set')
-        outputs_val = get_preds(val_loader, 'val', output_dir)
+        ''' Validation set '''
+        # outputs_val = get_preds(val_loader, 'val', output_dir, new=True, save=False)
 
-        print('Test set')
+        ''' Test set '''
         outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=False)
 
         metrics_test = compute_metrics(outputs_test['labels'], outputs_test['preds'])
@@ -397,7 +409,11 @@ if __name__ == '__main__':
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
 
-        target_layers = [model.layer4[-1]]
+        # print list of model layers
+        # for name, param in model.named_parameters():
+        #     print(name, param.shape)
+
+        target_layers = model.features  # [model.layer4[-1]]  # resnet18
 
         labels_list = []
         paths_list = []
@@ -413,18 +429,16 @@ if __name__ == '__main__':
             img_batch, label_batch = batch['image'], batch['label']
             path_batch = batch['path']
             with torch.no_grad():
-                # todo preprocess
-                img_batch_p = preprocess(img_batch)
-                preds_raw = model(img_batch_p.to(device)).cpu()
+                preds_raw = model(img_batch.to(device)).cpu()
                 preds = F.softmax(preds_raw, dim=1).numpy()
-                preds_classes = preds.argmax(axis=1)
+                preds_classes = np.argmax(preds, axis=1)
 
             ''' Iterate over images in batch '''
             labels_list.append(label_batch)
             paths_list.append(path_batch)
             idxs_list.append(batch['idx'])
-            for i, img in enumerate(
-                    img_batch):  # tqdm(..., mininterval=2., desc='\tBatch', leave=False, total=len(img_batch)):
+            for i, img in enumerate(img_batch):
+                # tqdm(..., mininterval=2., desc='\tBatch', leave=False, total=len(img_batch)):
 
                 pred = preds[i]
                 idx = batch['idx'][i].item()
@@ -556,8 +570,8 @@ if __name__ == '__main__':
         
         """
 
-        if not hasattr(model, 'fw_with_emb'):
-            raise AttributeError('Model does not have fw_with_emb method')  # currently only for resnet18
+        # if not hasattr(model, 'fw_with_emb'):
+        #     raise AttributeError('Model does not have fw_with_emb method')  # currently only for resnet18
 
         ''' Extract embeddings through forward hooks '''
         activation = {}
@@ -572,7 +586,9 @@ if __name__ == '__main__':
             return hook
 
 
-        embeddings_hook = model.avgpool.register_forward_hook(get_activation('avgpool'))
+        emb_layer = 'avgpool'  # resnet18
+        # emb_layer = 'avgpool'  # efficientnet_v2_s
+        embeddings_hook = model.avgpool.register_forward_hook(get_activation(emb_layer))
 
         ''' Eval loop '''
         len_loader = len(test_loader)
@@ -590,8 +606,8 @@ if __name__ == '__main__':
                 paths.append(sample['path'])
 
                 img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-                img_batch = preprocess(img)
-                out, feature = model.fw_with_emb(img_batch)
+                # out, feature = model.fw_with_emb(img)
+                out = model(img)
 
                 loss = criterion(out, label)
                 ep_loss += loss.item()
@@ -600,13 +616,13 @@ if __name__ == '__main__':
                 preds.append(prediction_hard.cpu().numpy())
 
                 avgpools.append(activation['avgpool'].cpu().numpy())
-                features.append(feature.cpu().numpy())
+                # features.append(feature.cpu().numpy())
 
         labels = np.concatenate(labels)
         preds = np.concatenate(preds)
         paths = np.concatenate(paths)
         avgpools = np.concatenate(avgpools)[..., 0, 0]  # strip last 2 dimensions (N, C, 1, 1)
-        features = np.concatenate(features)
+        # features = np.concatenate(features)
 
         embeddings_hook.remove()
 
@@ -618,6 +634,8 @@ if __name__ == '__main__':
         ep_loss /= len_loader
 
         metrics = compute_metrics(labels, preds)
+
+        features = avgpools  # using the forward hooks, not fw_with_emb
 
         # embeddings distance matrix
         from sklearn.metrics.pairwise import cosine_similarity
@@ -636,3 +654,70 @@ if __name__ == '__main__':
 
     t1 = time.perf_counter()
     print(f'Execution finished in {t1 - t0:.2f}s')  # everything after dataset is loaded
+
+    ''' Sandbox Area'''
+
+    aug = False
+    if aug:
+        # call for each image in batch separately or for the whole batch?
+        ''' Unused '''
+        """
+        # for a runnable augmentation example look into `augmentation.py`
+        
+        # set default print float precision
+        np.set_printoptions(precision=2, suppress=True)
+
+        import torchvision.transforms.functional as F
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+        # what are the sample values (min, max, avg, std) for each?
+        for i, img in enumerate([sample['image'], img_pre, img_aug, img_aug_pre]):
+            img_n = F.normalize(img, mean=mean, std=std)
+            for j, img_v in enumerate([img, img_n]):
+
+                if False:
+                    v = img_v.numpy()
+                    v_min = v.min(axis=(0, 2, 3))
+                    v_max = v.max(axis=(0, 2, 3))
+                    v_mean = v.mean(axis=(0, 2, 3))
+                    v_std = v.std(axis=(0, 2, 3))
+                    print(f'[{i}, {j}]:\t'
+                          f'Min: {v_min},\t'
+                          f'Max: {v_max},\t'
+                          f'Mean: {v_mean},\t'
+                          f'Std: {v_std}')
+
+        # out, feature = model.fw_with_emb(img_batch)
+        out_raw = model(sample['image'].to(device))
+        out_pre = model(img_pre.to(device))
+        out_aug = model(img_aug.to(device))
+        out_aug_pre = model(img_aug_pre.to(device))
+
+        for o in [out_raw, out_pre, out_aug, out_aug_pre]:
+            loss = criterion(o, sample['label'].to(device))
+            print(f'Loss: {loss.item():.4e}')
+        """
+
+        """
+        How to do with augmentation, preprocessing, and collate_fn:
+        - preprocess not used at all
+        - collate_fn makes everything a tensor, it runs in the worker processes, I do not provide it (kept default)
+        - transform 
+            - transform=augmentation -> dataset loader -> dataset constructor, and runs in __getitem__  (I think in the worker processes)
+            - I need to provide both the augmentation functions for train and eval
+            - 
+        - augmentation can also run in training loop in main process
+        
+        how to make it work:
+        - first, don't waste time with transforms, just do it in the training loop
+        - then, make it work with transforms
+        
+        - ignore preprocess (don't run it pls)
+        - keep collate_fn as is and transforms empty
+        - add augmentation to the training loop
+        - make sure that eval uses the eval "aug"
+        
+        - first verify in eval
+            - non-augmented image processing should be equivalent
+        
+        """
