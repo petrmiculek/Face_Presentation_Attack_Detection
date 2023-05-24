@@ -368,13 +368,13 @@ if __name__ == '__main__':
     ''' Evaluation '''
     if args.eval:
         ''' Training set '''
-        # outputs_train = get_preds(train_loader, 'train', output_dir, new=True, save=False)
+        # outputs_train = get_preds(train_loader, 'train', output_dir, new=True, save=True)
 
         ''' Validation set '''
-        # outputs_val = get_preds(val_loader, 'val', output_dir, new=True, save=False)
+        # outputs_val = get_preds(val_loader, 'val', output_dir, new=True, save=True)
 
         ''' Test set '''
-        outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=False)
+        outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=True)
 
         metrics_test = compute_metrics(outputs_test['labels'], outputs_test['preds'])
         metrics_test = keys_append(metrics_test, ' Test')
