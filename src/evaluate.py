@@ -18,10 +18,13 @@ from tqdm import tqdm
 os.environ["WANDB_SILENT"] = "true"
 
 import numpy as np
-
+import pandas as pd
 import torch
 import torch.nn.functional as F
 
+import matplotlib
+
+matplotlib.use('tkagg')
 import matplotlib.pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -177,9 +180,9 @@ if __name__ == '__main__':
     - preprocess is not applied in DataLoader, but "manually" in eval_loop/similar
     
     """
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
-    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     run_dir = args.run
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
@@ -192,7 +195,7 @@ if __name__ == '__main__':
 
     ''' Arguments '''
     batch_size = args.batch_size if args.batch_size else config_dict['batch_size']
-    num_workers = args.num_workers if args.num_workers else config_dict['num_workers']
+    num_workers = args.num_workers if args.num_workers is not None else config_dict['num_workers']
     limit = args.limit if args.limit else -1
     # if args.mode is not None:
     #     config_dict['mode'] = args.mode
@@ -368,13 +371,13 @@ if __name__ == '__main__':
     ''' Evaluation '''
     if args.eval:
         ''' Training set '''
-        # outputs_train = get_preds(train_loader, 'train', output_dir, new=True, save=False)
+        # outputs_train = get_preds(train_loader, 'train', output_dir, new=True, save=True)
 
         ''' Validation set '''
-        # outputs_val = get_preds(val_loader, 'val', output_dir, new=True, save=False)
+        # outputs_val = get_preds(val_loader, 'val', output_dir, new=True, save=True)
 
         ''' Test set '''
-        outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=False)
+        outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=True)
 
         metrics_test = compute_metrics(outputs_test['labels'], outputs_test['preds'])
         metrics_test = keys_append(metrics_test, ' Test')
@@ -397,23 +400,91 @@ if __name__ == '__main__':
                              show=True)
 
     ''' Explainability - GradCAM-like '''
-    if args.cam:
-        from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
-            FullGrad
-        from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-        from pytorch_grad_cam.utils.image import show_cam_on_image
-        import seaborn as sns
+    from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
+        FullGrad
+    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 
+    if args.cam:
+        cam_dir = join(run_dir, 'cam')
+        os.makedirs(cam_dir, exist_ok=True)
+        target_layers = model.features[-1]  # [model.layer4[-1]]  # resnet18
+        grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
+        targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
+
+        cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W] }
+        for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
+            ''' Predict (batch) '''
+            with torch.no_grad():
+                preds_raw = model(batch['image'].to(device)).cpu()
+                preds = F.softmax(preds_raw, dim=1).numpy()
+                preds_classes = np.argmax(preds, axis=1)
+
+            ''' Generate CAMs for images in batch '''
+            for i, img in enumerate(batch['image']):
+                pred = preds[i]
+                idx = batch['idx'][i].item()
+                label = batch['label'][i].item()
+                cams = []
+                for t in targets:
+                    grayscale_cam = grad_cam(input_tensor=img[None, ...], targets=[t])  # img 4D
+                    grayscale_cam = grayscale_cam[0, ...]  # -> 3D
+                    cams.append(grayscale_cam)
+
+                cams = np.stack(cams)  # [C, H, W]
+                # cast cams to uint8  # note: attempt to save space
+                cams = (255 * cams).astype(np.uint8)
+
+                cams_out.append({'cam': cams,
+                                 'idx': idx,
+                                 'label': label,
+                                 'path': batch['path'][i],  # strings are not tensors
+                                 'pred': preds_classes[i],
+                                 })
+            # end of batch
+        # end of dataset
+
+        ''' Save CAMs '''
+        cams_df = pd.DataFrame(cams_out)
+        cams_df.to_pickle(join(cam_dir, 'cams.pkl.gz'), compression='gzip')
+        if False:
+            # from src.util import dol_from_lod
+            # cams_out = dol_from_lod(cams_out)
+            #
+            # cams_objs = [c['cam'] for c in cams_out]
+            # cams_objs = np.stack(cams_objs)  # [N, C, H, W] = [N, 5, 12, 12]
+            # idxs = [c['idx'] for c in cams_out]
+            # # save compressed numpy array
+            # np.savez_compressed(join(cam_dir, 'cams.npz'), cam=cams_objs, idx=idxs)
+            pass
+
+        if False:
+            ''' Average CAM per target class '''
+            canvas = None
+            target = 0
+            for c in cams_out:
+                cam_i = c['cam'][target]
+                if canvas is None:
+                    canvas = cam_i
+                else:
+                    canvas += cam_i
+
+            canvas /= len(cams_out)
+
+            plt.imshow(canvas)
+            # colorbar
+            plt.colorbar()
+            plt.show()
+
+    ''' Old CAM generation with overlayed visualization '''
+    # new approach (above) is to just generate-save, and analyse later
+    # todo copy CAM methods to new approach [func]
+    if False:
         methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
 
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
 
-        # print list of model layers
-        # for name, param in model.named_parameters():
-        #     print(name, param.shape)
-
-        target_layers = model.features  # [model.layer4[-1]]  # resnet18
+        target_layers = model.features[-1]  # [model.layer4[-1]]  # resnet18
 
         labels_list = []
         paths_list = []
@@ -425,34 +496,29 @@ if __name__ == '__main__':
 
         ''' Iterate over batches in dataset '''
         for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
-            img_batch, label = batch['image'], batch['label']
-            img_batch, label_batch = batch['image'], batch['label']
-            path_batch = batch['path']
             with torch.no_grad():
-                preds_raw = model(img_batch.to(device)).cpu()
+                preds_raw = model(batch['image'].to(device)).cpu()
                 preds = F.softmax(preds_raw, dim=1).numpy()
                 preds_classes = np.argmax(preds, axis=1)
 
-            ''' Iterate over images in batch '''
-            labels_list.append(label_batch)
-            paths_list.append(path_batch)
+            labels_list.append(batch['label'])
+            paths_list.append(batch['path'])
             idxs_list.append(batch['idx'])
-            for i, img in enumerate(img_batch):
+            ''' Iterate over images in batch '''
+            for i, img in enumerate(batch['image']):
                 # tqdm(..., mininterval=2., desc='\tBatch', leave=False, total=len(img_batch)):
 
                 pred = preds[i]
                 idx = batch['idx'][i].item()
-                label = label_batch[i].item()
+                label = batch['label'][i].item()
 
-                # img, label = img_batch[i:i + 1], label_batch[i:i + 1]  # img 4D, label 1D
                 img_np = img.cpu().numpy().transpose(1, 2, 0)  # img_np 3D
-                # img_np_batch = img_batch.cpu().numpy().transpose(0, 2, 3, 1)  # img_np 4D
 
                 img_cams = {}
 
                 for method in methods:  # tqdm(..., desc='CAM methods', mininterval=1, leave=False):
 
-                    # todo methods could be loaded outside the loop
+                    # todo methods could be loaded outside the loop [clean]
                     method_name = method.__name__
                     grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
 
@@ -467,13 +533,18 @@ if __name__ == '__main__':
                         # In this example grayscale_cam has only one image in the batch:
                         grayscale_cam = grayscale_cam[0, ...]  # -> 3D
 
-                        visualization = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
+                        # rescale from [min, max] to [0, 1]
+                        img_np_norm = (img_np - img_np.min()) / (img_np.max() - img_np.min())
+
+                        # note: with the edited library code giving true CAM sizes (not input image size), you have to rescale manually
+                        # this is not done here as of now
+                        visualization = show_cam_on_image(img_np_norm, grayscale_cam, use_rgb=True)
                         cams.append(grayscale_cam)
                         overlayed.append(visualization)
 
                     img_cams[method_name] = {'cams': cams, 'overlayed': overlayed}
 
-                    if True:
+                    if False:
                         ''' Plot CAMs '''
                         # explanation by class (same method)
                         sns.set_context('poster')
@@ -510,7 +581,7 @@ if __name__ == '__main__':
                 cams_all[idx] = img_cams
 
                 ''' Plot CAMs '''
-                if True:
+                if False:
                     # explanation by method (predicted class)
                     sns.set_context('poster')
                     fig, axs = plt.subplots(3, 3, figsize=(20, 20))
@@ -656,7 +727,6 @@ if __name__ == '__main__':
     print(f'Execution finished in {t1 - t0:.2f}s')  # everything after dataset is loaded
 
     ''' Sandbox Area'''
-
     aug = False
     if aug:
         # call for each image in batch separately or for the whole batch?

@@ -2,16 +2,19 @@
 import json
 import os
 import time
+from collections import defaultdict
 
 # external
 from prettytable import PrettyTable
 import numpy as np
+
 
 # local
 # -
 
 class LogTime:
     """Log times during run, print at the end"""
+
     def __init__(self):
         self.start = time.time()
         self.times = []
@@ -62,6 +65,15 @@ def get_dict(obj):
             if not key.startswith('_')}
 
 
+def dol_from_lod(lod):
+    """Get dict of lists from list of dicts."""
+    dol = defaultdict(list)
+    for d in lod:
+        for k, v in d.items():
+            dol[k].append(v)
+    return dol
+
+
 def print_dict(dictionary, title=''):
     """Print dictionary formatted."""
     print(title)  # newline
@@ -74,9 +86,11 @@ def print_dict(dictionary, title=''):
         else:
             print(f' {v}')
 
+
 def xor(a, b):
     """XOR of two boolean values."""
     return (a and not b) or (not a and b)
+
 
 def keys_append(dictionary, suffix):
     """Appends suffix to all keys in dictionary."""

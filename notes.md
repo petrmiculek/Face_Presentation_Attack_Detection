@@ -1,3 +1,5 @@
+commit 24.05. changed the layer freezing -- maybe frozen resnet didn't have any learnable layers before?
+
 doing:
 
 * augmentations  #DONE#

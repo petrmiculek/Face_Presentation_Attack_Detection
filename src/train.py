@@ -168,9 +168,15 @@ if __name__ == '__main__':
         model, preprocess = load_model(model_name, num_classes)
 
         # freeze all previous layers
+        layer_to_unfreeze = ''
+        if model_name == 'resnet18':
+            layer_to_unfreeze = 'fc'
+        elif model_name == 'efficientnet_v2_s':
+            layer_to_unfreeze = 'classifier'  # or features.7
+
         print('Note: Currently not freezing any layers')
         for name, param in model.named_parameters():
-            if 'fc' not in name:
+            if layer_to_unfreeze not in name:
                 # param.requires_grad = False
                 pass
             else:
