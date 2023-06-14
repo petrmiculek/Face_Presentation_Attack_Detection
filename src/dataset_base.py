@@ -147,6 +147,32 @@ def pick_dataset_version(name, mode):
     return datasets.iloc[0]
 
 
+def load_annotations(metadata_row, seed, limit=-1, shuffle=False, quiet=True):
+    # load annotations
+    paths_train = pd.read_csv(metadata_row['path_train'])
+    paths_val = pd.read_csv(metadata_row['path_val'])
+    paths_test = pd.read_csv(metadata_row['path_test'])
+    # add index column "idx"
+    paths_train['idx'] = paths_train.index
+    paths_val['idx'] = paths_val.index
+    paths_test['idx'] = paths_test.index
+    # shuffle initial order
+    if limit != -1 or shuffle:
+        # shuffle when limiting dataset size to keep classes balanced
+        paths_train = paths_train.sample(frac=1, random_state=seed).reset_index(drop=True)
+        paths_val = paths_val.sample(frac=1, random_state=seed).reset_index(drop=True)
+        paths_test = paths_test.sample(frac=1, random_state=seed).reset_index(drop=True)
+
+        # limit dataset size
+        if not quiet:
+            print(f'Limiting dataset (each split) to {limit} samples.')
+        paths_train = paths_train[:limit]
+        paths_val = paths_val[:limit]
+        paths_test = paths_test[:limit]
+
+    return {'train': paths_train, 'val': paths_val, 'test': paths_test}
+
+
 def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_kwargs):
     """
     Load dataset from metadata.
@@ -175,52 +201,29 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
         transform_train = loader_kwargs.pop('transform_train', None)
         transform_eval = loader_kwargs.pop('transform_eval', None)
 
-    # load annotations
-    paths_train = pd.read_csv(metadata_row['path_train'])
-    paths_val = pd.read_csv(metadata_row['path_val'])
-    paths_test = pd.read_csv(metadata_row['path_test'])
-
-    # add index column "idx"
-    paths_train['idx'] = paths_train.index
-    paths_val['idx'] = paths_val.index
-    paths_test['idx'] = paths_test.index
-
-    num_classes = int(metadata_row['num_classes'])
-
     shuffle = loader_kwargs.pop('shuffle', False)
-    # shuffle initial order
-    if limit != -1 or shuffle:
-        # shuffle when limiting dataset size to keep classes balanced
-        paths_train = paths_train.sample(frac=1, random_state=seed).reset_index(drop=True)
-        paths_val = paths_val.sample(frac=1, random_state=seed).reset_index(drop=True)
-        paths_test = paths_test.sample(frac=1, random_state=seed).reset_index(drop=True)
+    paths = load_annotations(metadata_row, seed, limit, shuffle, quiet)
 
-        # limit dataset size
-        if not quiet:
-            print(f'Limiting dataset (each split) to {limit} samples.')
-        paths_train = paths_train[:limit]
-        paths_val = paths_val[:limit]
-        paths_test = paths_test[:limit]
-
-    # print label distributions
+    ''' print label distributions '''
     if not quiet:
+        num_classes = int(metadata_row['num_classes'])
         print('Dataset labels per split:')  # including labels not present
-        it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
-        for split, paths in it:
+        # it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
+        for split, split_paths in paths.items():
             class_occurences = []
-            value_counts = paths['label'].value_counts().sort_index()
+            value_counts = split_paths['label'].value_counts().sort_index()
             for i in range(num_classes):
-                if i in paths['label'].values:
+                if i in value_counts.index:
                     class_occurences.append(value_counts[i])
                 else:
                     class_occurences.append(0)
 
             print(f'{split}:', class_occurences)
 
-    # data loaders
-    loader_train = dataset_module.Loader(paths_train, seed=seed, transform=transform_train, **loader_kwargs,
+    ''' Data loaders '''
+    loader_train = dataset_module.Loader(paths['train'], seed=seed, transform=transform_train, **loader_kwargs,
                                          shuffle=shuffle)
-    loader_val = dataset_module.Loader(paths_val, seed=seed, transform=transform_eval, **loader_kwargs)
-    loader_test = dataset_module.Loader(paths_test, seed=seed, transform=transform_eval, **loader_kwargs)
+    loader_val = dataset_module.Loader(paths['val'], seed=seed, transform=transform_eval, **loader_kwargs)
+    loader_test = dataset_module.Loader(paths['test'], seed=seed, transform=transform_eval, **loader_kwargs)
 
     return loader_train, loader_val, loader_test

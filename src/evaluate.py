@@ -54,8 +54,6 @@ device = None
 preprocess = None
 criterion = None
 
-transform_train = None
-transform_eval = None
 ''' Global variables '''
 # -
 
@@ -175,10 +173,8 @@ def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
 if __name__ == '__main__':
     """
     Evaluate model on dataset, run explanation methods
-    
     Note:
-    - preprocess is not applied in DataLoader, but "manually" in eval_loop/similar
-    
+    - preprocess is obtained automatically in load_model, and applied in DataLoader. Do not use it manually.
     """
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
@@ -220,7 +216,7 @@ if __name__ == '__main__':
     print(f"Current device: {torch.cuda.current_device()}")
     print(f"Device name: {torch.cuda.get_device_name(0)}")
 
-    seed = args.seed if args.seed else config.seed_eval_default
+    seed = args.seed if args.seed is not None else config.seed_eval_default  # 42
     print(f'Random seed: {seed}')
     np.random.seed(seed)
     torch.manual_seed(seed)
