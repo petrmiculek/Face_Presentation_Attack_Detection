@@ -19,27 +19,24 @@ import sys
 import time
 from os.path import join
 import warnings
-from contextlib import suppress
+
+from util_image import overlay_cam
 
 # fix for local import problems - add all local directories
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
 
 # external
-from sklearn.metrics import classification_report
-from tqdm import tqdm
 
 os.environ["WANDB_SILENT"] = "true"
 
 import numpy as np
 import pandas as pd
-import cv2
 import torch
 import matplotlib
 
 matplotlib.use('tkagg')
 import matplotlib.pyplot as plt
-from pytorch_grad_cam.utils.image import show_cam_on_image
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
@@ -49,7 +46,6 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-from metrics import compute_metrics, confusion_matrix
 import config
 
 ''' Global variables '''
@@ -127,16 +123,22 @@ def plot2x3(cam_entry, img, output_path=None):
 
 
 def plot5x5(cams, output_path=None):
-    """Plot 5x5 figure with a confusion matrix of CAMs."""
-    fig, axs = plt.subplots(5, 5, figsize=(15, 15))
+    """Plot 5x5 figure with a confusion matrix of CAMs.
+
+    cams: Input matrix: [gt, pred, h, w]
+    """
+    fig, axs = plt.subplots(5, 5, figsize=(12, 12))
     title = 'Average GradCAM Confusion Matrix'
-    fig.suptitle(title)
-    for i, class_pred in enumerate(label_names):  # rows == pred
-        for j, class_gt in enumerate(label_names):  # cols == gt
-            if i == 0:  # top-row: add title
-                axs[i, j].set_title(class_gt)
-            if j == 0:  # left-column: add ylabel
-                axs[i, j].set_ylabel(class_pred, rotation=0, labelpad=30)
+    fig.suptitle(title, fontsize=16)
+
+    for i, class_gt in enumerate(label_names):  # rows == gt
+        for j, class_pred in enumerate(label_names):  # cols == pred
+            if i == 0:  # top-row
+                axs[i, j].set_title(class_pred, fontsize=12)
+                print(class_pred, end=' ')
+            if j == 0:  # left-column
+                axs[i, j].set_ylabel(class_gt, rotation=90, labelpad=5, fontsize=12)
+                print(class_gt, end=' ')
 
             axs[i, j].imshow(cams[i, j], vmin=0, vmax=255)
             axs[i, j].set_xticks([])
@@ -144,40 +146,18 @@ def plot5x5(cams, output_path=None):
             # remove frame around image
             for spine in axs[i, j].spines.values():
                 spine.set_visible(False)
+
     plt.tight_layout()
+    # write at the left: "predicted"
+    axs[2, 0].text(-0.2, 0.5, 'predicted', rotation=90, va='center', ha='center', transform=axs[2, 0].transAxes,
+                   fontsize=14)
+
     if output_path is not None:
         plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
         print(f'Saved to {output_path}, {title} (plot5x5)')
     if args.show:
         plt.show()
     plt.close(fig)
-
-
-def overlay_cam(img, cam):
-    """
-    Overlay CAM on image.
-    :param img: PIL jpeg ~uint8?, WxHx3
-    :param cam: np array uint8, MxN (e.g. 12x12)
-    :return: np array uint8, WxHx3
-
-    - cubic looks better but it doesn't maintain the value range => clamp or rescale
-    - viridis = default matplotlib colormap
-    - todo: how is the colormap applied? [0, 1] or [min, max]?
-    - blending weight arbitrary
-    """
-
-    # normalize image and cam
-    img_np = np.array(img, dtype=float) / 255
-    cam_np = np.array(cam, dtype=float) / 255
-    cam_min, cam_max = cam_np.min(), cam_np.max()
-    # resize cam to image size
-    cam_np_resized = cv2.resize(cam_np, (img_np.shape[1], img_np.shape[0]),
-                                interpolation=cv2.INTER_CUBIC)  # INTER_NEAREST
-    # clamp to [min, max], as cubic doesn't keep the value range
-    cam_np_resized = np.clip(cam_np_resized, cam_min, cam_max)
-    overlayed = show_cam_on_image(img_np, cam_np_resized, use_rgb=True, image_weight=0.3,
-                                  colormap=cv2.COLORMAP_VIRIDIS)
-    return overlayed
 
 
 # def main():
@@ -189,8 +169,8 @@ if __name__ == '__main__':
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
     run_dir = args.run
-    path_cams = join(run_dir, 'cam', 'cams.pkl.gz')
-    cams_id = 'gradcam'
+    path_cams = join(run_dir, 'cam', 'cams-gradcam.pkl.gz')
+    cams_id = 'gradcam-re'
 
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
@@ -268,6 +248,19 @@ if __name__ == '__main__':
     labels = df['label'].values
     preds = df['pred'].values
 
+    ''' Per-image Deletion Metric Plot'''
+    if False:
+        # x: perturbation level
+        # y: prediction drop
+        pass
+
+    ''' Per-class Deletion Metric Plot'''
+    if False:
+        pass
+        # x: perturbation level
+        # y: prediction drop
+        # hue: class
+
     ''' Per-image CAM for all classes '''
     if False:
         for i in range(3):
@@ -308,15 +301,12 @@ if __name__ == '__main__':
     if True:
         # confusion matrix for CAMs
         cams_confmat = np.zeros((len(label_names), *cam_shape))  # (pred, label, h, w)
-        cams = np.stack(df['cam'].values)
-        preds = df['pred'].values
-        labels = df['label'].values
 
         with warnings.catch_warnings():
             warnings.filterwarnings(action='ignore')
-            for i in range(len(label_names)):
-                for j in range(len(label_names)):
-                    cams_confmat[i, j] = np.mean(cams[(preds == i) & (labels == j)], axis=0)[i]
+            for i in range(len(label_names)):  # i == label (gt)
+                for j in range(len(label_names)):  # j == pred
+                    cams_confmat[i, j] = np.mean(cams[(labels == i) & (preds == j)], axis=0)[j]
 
         cams_confmat[np.isnan(cams_confmat)] = 0
 
@@ -331,31 +321,31 @@ if __name__ == '__main__':
         for i, row in df.iterrows():
             if row['pred'] == row['label']:
                 continue
-
-            img = ds[i]['image']
+            idx = row['idx']
+            s = ds[idx]
+            img = s['image']
             pred = row['pred']
             label = row['label']
             cam_pred = row['cam'][pred]
             cam_label = row['cam'][label]
-            idx = row['idx']
 
             ''' Overlay CAM (plot1x3) '''
             overlayed_pred = overlay_cam(img, cam_pred)
             overlayed_label = overlay_cam(img, cam_label)
 
             output_path = join(run_dir, 'cam', f'{cams_id}-incorrect-pred-{idx}.png')
-            title = f'{idx}: {nums_to_names[pred]} instead of {nums_to_names[label]}'
+            title = f'Prediction Error'
 
             # 1x3 figure: image, predicted cam, ground truth cam
             fig, axs = plt.subplots(1, 3, figsize=(12, 4))
             axs[0].imshow(img)
-            axs[0].set_title('Image')
+            axs[0].set_title(f'Image[{idx}]')
             axs[0].axis('off')
             axs[1].imshow(overlayed_pred)
-            axs[1].set_title('Predicted')
+            axs[1].set_title(f'Predicted: {nums_to_names[pred]}')
             axs[1].axis('off')
             axs[2].imshow(overlayed_label)
-            axs[2].set_title('Ground truth')
+            axs[2].set_title(f'Ground truth: {nums_to_names[label]}')
             axs[2].axis('off')
             plt.suptitle(title)
             plt.tight_layout()

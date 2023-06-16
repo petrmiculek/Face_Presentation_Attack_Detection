@@ -17,10 +17,10 @@ from tqdm import tqdm
 
 os.environ["WANDB_SILENT"] = "true"
 
-import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import numpy as np
 
 import matplotlib
 # matplotlib.use('tkagg')  # helped for some plotting issues. Metacentrum-specific: see https://metavo.metacentrum.cz/en/software/python-modules/
@@ -36,7 +36,7 @@ pil_logger.setLevel(logging.INFO)
 # local
 # import dataset_rose_youtu as dataset
 from metrics import compute_metrics, confusion_matrix  # , accuracy
-from util import print_dict, save_i, keys_append
+from util import print_dict, save_i, keys_append, plot_many
 from model_util import load_model
 import config
 
@@ -210,16 +210,20 @@ if __name__ == '__main__':
     ''' Initialization '''
     print(f"Available GPUs: {torch.cuda.device_count()}")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # device = torch.device("cpu")
     print(f'Running on device: {device}')
     print(f"Current device: {torch.cuda.current_device()}")
     print(f"Device name: {torch.cuda.get_device_name(0)}")
+
+    np.set_printoptions(precision=3, suppress=True)  # human-readable printing
 
     seed = args.seed if args.seed is not None else config.seed_eval_default  # 42
     print(f'Random seed: {seed}')
     np.random.seed(seed)
     torch.manual_seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # todo extract init and seed application to respective functions [clean]
 
     model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir)
     print(f'Model: {config_dict["model_name"]} with {config_dict["num_classes"]} classes')
@@ -247,7 +251,7 @@ if __name__ == '__main__':
 
     t0 = time.perf_counter()
 
-    ''' LIME - Generate explanations for dataset split/s '''
+    ''' LIME Explanations '''
     if args.lime:
         print('Generating LIME explanations')
         from lime import lime_image
@@ -322,7 +326,7 @@ if __name__ == '__main__':
             for batch in tqdm(test_loader, mininterval=1., desc='Eval'):
                 img_batch, label = batch['image'], batch['label']
                 idx = batch['idx']
-                labels.append(label)  # check if label gets mutated by .to() ...
+                labels.append(label)
                 paths.append(batch['path'])
                 idxs.append(idx)
                 for i, img in tqdm(enumerate(img_batch), mininterval=1., desc='\tBatch', leave=False,
@@ -394,209 +398,229 @@ if __name__ == '__main__':
             confusion_matrix(labels_binary, preds_binary, output_location=cm_binary_location, labels=label_names_binary,
                              show=True)
 
-    ''' Explainability - GradCAM-like '''
-    from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
-        FullGrad
+    ''' CAM Explanations  '''
+    from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, LayerCAM
+    # todo check more methods in the library
     from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget, ClassifierOutputSoftmaxTarget
+    from pytorch_grad_cam.utils.image import show_cam_on_image, deprocess_image, preprocess_image
+    from pytorch_grad_cam.metrics.cam_mult_image import CamMultImageConfidenceChange
+    from src.util import get_marker
 
     if args.cam:
+        def deprocess(img):
+            import torch
+            if isinstance(img, torch.Tensor):
+                img = img.detach().cpu().numpy()  # might fail when no grad
+                img = img.transpose(1, 2, 0)
+            img = img - np.mean(img)
+            img = img / (np.std(img) + 1e-5)
+            img = img * 0.1
+            img = img + 0.5
+            img = np.clip(img, 0, 1)
+            # don't make image uint8
+            return img
+
+
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+        method_modules = [
+            GradCAM]  # [GradCAM, HiResCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM]  # ScoreCAM OOM, FullGrad too different
         # methods_callables = [ for method in methods_]
         # grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
-        # ^ minor difference from using ClassifierOutputTarget.
+        #           ^ minor visual difference from ClassifierOutputTarget.
+        cam_metric = CamMultImageConfidenceChange()  # DropInConfidence()
 
         cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W] }
         for method_module in method_modules:
             cam_method = method_module(model=model, target_layers=target_layers, use_cuda=True)
-            for batch in tqdm(test_loader, mininterval=2., desc=cam_method.__class__.__name__):
+            method_name = cam_method.__class__.__name__
+            print(f'{method_name}:')
+            if 'batch_size' in cam_method.__dict__:  # AblationCAM
+                print(f'Orig batch size for {method_name}: {cam_method.batch_size}')
+                cam_method.batch_size = 32  # == default
+
+            for batch in tqdm(test_loader, mininterval=2., desc=method_name):
                 ''' Predict (batch) '''
-                with torch.no_grad():
-                    preds_raw = model(batch['image'].to(device)).cpu()
-                    preds = F.softmax(preds_raw, dim=1).numpy()
-                    preds_classes = np.argmax(preds, axis=1)
+                img_batch = batch['image'].to(device)
+                with torch.no_grad():  # prediction on original image (batch)
+                    preds_raw_b = model(img_batch).cpu()
+                    preds_b = F.softmax(preds_raw_b, dim=1).numpy()
+                    preds_classes_b = np.argmax(preds_b, axis=1)
 
                 ''' Generate CAMs for images in batch '''
-                for i, img in enumerate(batch['image']):
-                    pred = preds[i]
+                for i, img in enumerate(img_batch):
+                    img_plotting = deprocess(img.cpu().numpy())
+                    pred = preds_b[i]
+                    pred_class = preds_classes_b[i]
+                    pred_class_name = label_names[pred_class]
                     idx = batch['idx'][i].item()
                     label = batch['label'][i].item()
                     cams = []
-                    for t in targets:
+                    print(f'idx: {idx}, pred: {pred_class_name}, label: {label_names[label]}')
+
+                    ''' Generate CAMs for all classes (targets) '''
+                    for j, t in enumerate(targets):
                         grayscale_cam = cam_method(input_tensor=img[None, ...], targets=[t])  # img 4D
-                        grayscale_cam = grayscale_cam[0, ...]  # -> 3D
                         cams.append(grayscale_cam)
+
+                    cam_pred = cams[pred_class]
+
+                    ''' Blur CAM '''
+                    sigma = config.blur_kernel_size
+                    cam_blurred = cam_pred[0] + cv2.blur(cam_pred[0], (sigma, sigma))
+                    # rank pixels by descending CAM value
+                    cam_ranking = np.argsort(cam_blurred.flatten())[::-1]
+
+                    masked_cams = [cam_pred]
+                    ratios = [0]
+                    for removed_ratio in [0.1, 0.3, 0.5, 0.7, 0.9]:
+                        n_to_remove = int(removed_ratio * len(cam_ranking))
+                        to_remove = cam_ranking[:n_to_remove]
+
+                        mask_kept = np.zeros_like(cam_ranking) + 1
+                        mask_kept[to_remove] = 0
+                        mask_kept = mask_kept.reshape(cam_blurred.shape)
+                        # apply mask
+                        masked_cam = cam_blurred * mask_kept
+                        masked_cams.append(masked_cam)
+                        ratios.append(removed_ratio)
+
+                    # plot_many(*masked_cams, title='Masks', titles=[f'{r:.2f}' for r in ratios], vmin=0, vmax=1)
+
+                    ''' Remove explained region from image '''
+                    cams_perturbed = [cam_pred]
+                    scores_perturbed = [pred[pred_class]]
+                    perturbation_intensities = [90, 70, 50, 30, 10, 0]  # percent of explanation kept
+                    for expl_percent_kept in perturbation_intensities:
+                        cam_impute_base = cam_pred[cam_pred > -100]  # delete from total CAM mask, or only nonzero?
+                        threshold = np.percentile(cam_impute_base, expl_percent_kept)
+                        cam_pred_mask = torch.Tensor(cam_pred < threshold).cuda()
+                        cams_perturbed.append(cam_pred_mask)
+
+                        ''' Remove explained region '''
+                        img_masked = (img * cam_pred_mask)[None, ...]
+                        img_masked_plotting = img_plotting * cam_pred_mask.cpu().numpy()
+                        print(f'explanation kept: {expl_percent_kept} %')
+                        total_percent_kept = 100 * cam_pred_mask.sum() / cam_pred_mask.numel()
+                        print(f'total image kept: {total_percent_kept:.2f} %')
+
+                        ''' Predict on perturbed image '''
+                        with torch.no_grad():  # prediction on modified image (single, not batched)
+                            preds_raw_perturbed_b = model(img_masked).cpu()
+                            preds_perturbed_b = F.softmax(preds_raw_perturbed_b, dim=1).numpy()
+                            preds_classes_perturbed_b = np.argmax(preds_perturbed_b, axis=1)
+                            pred_score_perturbed = preds_perturbed_b[0, preds_classes_b][
+                                0]  # not taking the top class for perturbed prediction!
+
+                        ''' Compute Deletion Score '''
+                        deletion_score = pred_score_perturbed - pred[pred_class]
+                        print(f'orig: {pred}')
+                        print(f'pert: {preds_perturbed_b}')
+                        print(f'score: {pred_score_perturbed:.4f}, drop: {deletion_score:.4f}\n')
+                        scores_perturbed.append(pred_score_perturbed)
+
+                        cam2 = cam_method(input_tensor=img_masked, targets=[targets[pred_class]])
+                        output_path = join(cam_dir, f'deletion_{idx}_{method_name}_kept{expl_percent_kept}.png')
+                        plot_many(img_plotting, cam_pred, cam_pred_mask, img_masked_plotting, cam2,
+                                  title=f'{method_name}\npredicted: {pred_class_name} ({pred[pred_class]:.4f})\n'
+                                        f'{expl_percent_kept}% cam kept,{total_percent_kept:.0f}% of total\n'
+                                        f'drop: {deletion_score:.4f}',
+                                  output_path=output_path, show=False)
+                        raise UserWarning()
+
+                    if False:
+                        # baseline predictions - should give neutral scores 1/C. Not true here.
+                        zeros = img[None, ...] * 0
+                        ones = zeros + 1
+                        imagenet_channel_mean = torch.Tensor([0.485, 0.456, 0.406]).to(device)
+                        means = zeros + imagenet_channel_mean[None, :, None, None]
+                        zeros_pred = F.softmax(model(zeros), dim=1).detach().cpu().numpy()
+                        ones_pred = F.softmax(model(ones), dim=1).detach().cpu().numpy()
+                        mean_pred = F.softmax(model(means), dim=1).detach().cpu().numpy()
+
+                    if False:
+                        pass
+                        # scores = []  # before, after cams = []
+
+                        # for j, t in enumerate(targets):
+                        #     cm_kwargs = {'targets': [t], 'model': model,  # more targets only works for batching, not for a single-sample prediction
+                        #                  'return_visualization': False, 'return_diff': False}
+                        #     # check for min grayscale_cam value
+                        #     if grayscale_cam.min() < 0:
+                        #         print(f'Negative min value for {method_name}!')
+                        #         grayscale_cam -= np.min(grayscale_cam)
+                        #
+                        #     thresholded_cam = grayscale_cam >= np.percentile(grayscale_cam, 70)
+                        #     grayscale_cam = thresholded_cam
+                        #
+                        #     score = cam_metric(img[None, ...], grayscale_cam, **cm_kwargs)[0]
+                        #     inverse_cam = 1 - grayscale_cam
+                        #     inv_score = cam_metric(img[None, ...], inverse_cam, **cm_kwargs)[0]
+                        #
+                        #     grayscale_cam = grayscale_cam[0, ...]  # -> 3D
+                        #     scores.append(score)
+                        #     # 1x2 figure, grayscale_cam, inverse_cam
+                        #     # plot_many(grayscale_cam, inverse_cam)
+                        #     img_hwc = img.permute(1, 2, 0).cpu().numpy()
+                        #
+                        #     print(f'{method_name}: Orig = {pred[j]:.3f}, DelCAM = {inv_score:.3f}, DelInvCAM = {inv_score:.3f}')
 
                     cams = np.stack(cams)  # [C, H, W]
                     cams = (255 * cams).astype(np.uint8)  # uint8 to save space
 
                     cams_out.append({'cam': cams, 'idx': idx,
-                                     'label': label, 'path': batch['path'][i],  # strings are not tensors
-                                     'pred': preds_classes[i], 'method': cam_method.__class__.__name__})
-                # end of batch
-            # end of dataset
-        # end of method
-        ''' Save CAMs '''
-        cams_df = pd.DataFrame(cams_out)
-        cams_df.to_pickle(join(cam_dir, 'cams.pkl.gz'), compression='gzip')
+                                     'method': method_name, 'path': batch['path'][i],  # strings are not tensors
+                                     'label': label, 'pred': preds_classes_b[i],
+                                     'del_scores': scores_perturbed, 'pred_scores': preds_b[i]})
+                    # end of batch
+                # end of dataset
+            # end of method
 
-    ''' Old CAM generation with overlayed visualization '''
-    # new approach (above) is to just generate-save, and analyse later
-    # todo copy CAM methods to new approach [func]
-    if False:
-        methods = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+            # free gpu memory
+            # del cam_method
+            # torch.cuda.empty_cache()
+            ''' Save CAMs per method '''
+            cams_df = pd.DataFrame(cams_out)
+            # cams_df.to_pickle(join(cam_dir, f'cams-{method_name}.pkl.gz'), compression='gzip')
+            print('Not saving CAMs!')
+        # end of all methods
 
-        cam_dir = join(run_dir, 'cam')
-        os.makedirs(cam_dir, exist_ok=True)
+        ''' Plot Deletion Scores '''
+        if False:
+            scores = np.stack(cams_df['del_scores'].values)
+            idxs = cams_df['idx'].values
+            # x = perturbation_intensities
+            # y = scores - axis 0 is perturbation intensity, axis 1 is sample
+            # hue = sample
+            import seaborn as sns
 
-        target_layers = model.features[-1]  # [model.layer4[-1]]  # resnet18
+            xticks = [100] + perturbation_intensities
+            plt.figure(figsize=(6, 4))
+            for i, scores_line in enumerate(scores):
+                sample_idx = idxs[i]
+                marker_random = get_marker(sample_idx)
+                plt.plot(xticks, scores_line, label=sample_idx, marker=marker_random)
 
-        labels_list = []
-        paths_list = []
-        preds_list = []
-        idxs_list = []
-        cams_all = dict()
+            plt.xticks(xticks)  # original x-values ticks
+            plt.gca().invert_xaxis()  # decreasing x axis
+            plt.ylim(0, 1.05)
+            plt.legend(title='Sample ID')
+            plt.ylabel('Prediction Score')
+            plt.xlabel('Perturbation Intensity (% of image kept)')
+            plt.title('Deletion Metric')
 
-        nums_to_names = dataset_module.nums_to_unified
+            # remove top and right spines
+            plt.gca().spines['top'].set_visible(False)
+            plt.gca().spines['right'].set_visible(False)
 
-        ''' Iterate over batches in dataset '''
-        for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
-            with torch.no_grad():
-                preds_raw = model(batch['image'].to(device)).cpu()
-                preds = F.softmax(preds_raw, dim=1).numpy()
-                preds_classes = np.argmax(preds, axis=1)
-
-            labels_list.append(batch['label'])
-            paths_list.append(batch['path'])
-            idxs_list.append(batch['idx'])
-            ''' Iterate over images in batch '''
-            for i, img in enumerate(batch['image']):
-                # tqdm(..., mininterval=2., desc='\tBatch', leave=False, total=len(img_batch)):
-
-                pred = preds[i]
-                idx = batch['idx'][i].item()
-                label = batch['label'][i].item()
-
-                img_np = img.cpu().numpy().transpose(1, 2, 0)  # img_np 3D
-
-                img_cams = {}
-
-                for method in methods:  # tqdm(..., desc='CAM methods', mininterval=1, leave=False):
-
-                    # todo methods could be loaded outside the loop [clean]
-                    method_name = method.__name__
-                    grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
-
-                    targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
-
-                    # explanations by class (same method)
-                    cams = []
-                    overlayed = []
-                    for k, t in enumerate(targets):
-                        grayscale_cam = grad_cam(input_tensor=img[None, ...], targets=[t])  # img 4D
-
-                        # In this example grayscale_cam has only one image in the batch:
-                        grayscale_cam = grayscale_cam[0, ...]  # -> 3D
-
-                        # rescale from [min, max] to [0, 1]
-                        img_np_norm = (img_np - img_np.min()) / (img_np.max() - img_np.min())
-
-                        # note: with the edited library code giving true CAM sizes (not input image size), you have to rescale manually
-                        # this is not done here as of now
-                        visualization = show_cam_on_image(img_np_norm, grayscale_cam, use_rgb=True)
-                        cams.append(grayscale_cam)
-                        overlayed.append(visualization)
-
-                    img_cams[method_name] = {'cams': cams, 'overlayed': overlayed}
-
-                    if False:
-                        ''' Plot CAMs '''
-                        # explanation by class (same method)
-                        sns.set_context('poster')
-                        fig, axs = plt.subplots(2, 3, figsize=(20, 16))
-                        plt.subplot(2, 3, 1)
-                        plt.imshow(img_np)
-                        plt.title('Original image')
-                        plt.axis('off')
-
-                        for j, c in enumerate(overlayed):
-                            plt.subplot(2, 3, j + 2)
-                            plt.imshow(c)
-                            label_pred_score = f': {preds[i, j]:.2f}'
-                            matches_label = f' (GT)' if j == label else ''
-                            plt.title(label_names[j] + label_pred_score + matches_label)
-                            plt.axis('off')
-                            # remove margin around image
-                            # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-                        plt.tight_layout()
-
-                        if args.show:
-                            plt.show()
-
-                        # save figure fig to path
-                        path = join(cam_dir, f'{method_name}_{dataset_name}_img{idx}_gt{label}.png')
-                        fig.savefig(path, bbox_inches='tight', pad_inches=0)
-
-                        # close figure
-                        plt.close(fig)
-
-                    # end of cam methods loop
-
-                cams_all[idx] = img_cams
-
-                ''' Plot CAMs '''
-                if False:
-                    # explanation by method (predicted class)
-                    sns.set_context('poster')
-                    fig, axs = plt.subplots(3, 3, figsize=(20, 20))
-                    plt.subplot(3, 3, 1)
-                    plt.imshow(img_np)
-                    plt.title(f'Original image')
-                    plt.axis('off')
-
-                    gt_label_name = label_names[label]
-                    pred_label_name = label_names[pred.argmax()]
-
-                    j = 0
-                    for name, cs in img_cams.items():
-                        c = cs['overlayed'][label]
-                        plt.subplot(3, 3, j + 2)
-                        plt.imshow(c)
-                        plt.title(name)
-                        plt.axis('off')
-                        # remove margin around image
-                        # plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-                        j += 1
-
-                    plt.suptitle(f'CAM Methods Comparison, GT: "{gt_label_name}" pred: {pred_label_name}')
-                    plt.tight_layout()
-
-                    # save figure fig to path
-                    path = join(cam_dir, f'cam-comparison-gt{label}-rose_youtu.pdf')
-                    fig.savefig(path, bbox_inches='tight', pad_inches=0)
-                    if args.show:
-                        plt.show()
-
-                    plt.close(fig)
-
-                # end of images in batch loop
-            # end of batches in dataset loop
-        # end of CAM methods section
-
-        labels_list = np.concatenate(labels_list)
-        paths_list = np.concatenate(paths_list)
-        idxs_list = np.concatenate(idxs_list)
-
-        ''' Save CAMs npz '''
-        maybe_limit = f'_limit{limit}' if limit else ''
-        path = join(cam_dir, f'cams_{dataset_name}{maybe_limit}.npz')
-        np.savez(path, cams_all=cams_all, labels=labels_list, paths=paths_list, idxs=idxs_list)
-        print(f'Saved CAMs to {path}')
+            plt.tight_layout()
+            output_path = join(cam_dir, 'deletion_metric.png')
+            if output_path:
+                plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
+            plt.show()
 
     ''' Embeddings '''
     if args.emb:

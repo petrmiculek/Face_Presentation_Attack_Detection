@@ -1,3 +1,4 @@
+#! /usr/bin/bash
 # qsub -I -l select=1:ncpus=4:mem=32gb:ngpus=1:scratch_shm=true -q gpu -l walltime=1:30:00
 # singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:23.02-py3.SIF
 # singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
@@ -26,7 +27,6 @@ echo "# REPLACE=$REPLACE"
 # edit copies of dataset annotation files
 tmp_counter=1
 for file in dataset_lists/dataset_*.csv; do
-#	echo "# Processing paths in $file"
 	out_tmp="dataset_lists/tmp_$tmp_counter.csv"
 	echo "perl -pe 's|\Q$FIND\E|$REPLACE|g' $file>$out_tmp"
 	echo "mv $out_tmp $file"
@@ -40,9 +40,9 @@ done
 
 #pip install lime
 pip install pytorch-grad-cam seaborn
+pip show grad-cam | grep "Location: "  # don't forget to edit pytorch_grad_cam/utils/image.py:L166 (don't resize)
 
-pip show grad-cam | grep "Location: "
-
+pip install opencv-python-headless
 
 # LIME generation
 CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime --limit 4 -w 1
@@ -58,3 +58,4 @@ CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 0 -t 4
 # mv dataset_lists/train dataset_lists/dataset_rose_youtu_train_all_attacks.csv
 # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_val_all_attacks.csv >dataset_lists/val
 # mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
+

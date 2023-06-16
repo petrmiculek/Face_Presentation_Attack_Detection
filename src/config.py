@@ -13,3 +13,5 @@ HPARAMS = {
 }
 
 seed_eval_default = 42
+
+blur_kernel_size = int(386 // 2)  # 386 is the size of the input image; = sigma in gaussian blur

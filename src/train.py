@@ -93,8 +93,8 @@ if __name__ == '__main__':
     np.random.seed(seed)
     torch.manual_seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
-
-    # torch.backends.cudnn.deterministic = True  # can this make things fail?
+    torch.backends.cudnn.deterministic = True  # can this make things fail?
+    torch.backends.cudnn.benchmark = False
 
     ''' Dataset + Training mode '''
     # load dataset module - name based match for the .py module, specific split is defined later
