@@ -23,9 +23,9 @@ import torch
 import torch.nn.functional as F
 
 import matplotlib
-
-matplotlib.use('tkagg')
+# matplotlib.use('tkagg')  # helped for some plotting issues. Metacentrum-specific: see https://metavo.metacentrum.cz/en/software/python-modules/
 import matplotlib.pyplot as plt
+
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
@@ -398,14 +398,18 @@ if __name__ == '__main__':
     ''' Explainability - GradCAM-like '''
     from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
         FullGrad
-    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget, ClassifierOutputSoftmaxTarget
 
     if args.cam:
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
-        target_layers = model.features[-1]  # [model.layer4[-1]]  # resnet18
+        target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
+        # ^ make sure only last layer of the block is used, but still wrapped in a list
+        # methods_ = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+        # methods_callables = [method(model=model, target_layer=target_layers, use_cuda=True) for method in methods_]
         grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
-        targets = [ClassifierOutputTarget(cat) for cat in range(config_dict['num_classes'])]
+        targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
+        # ^ minor difference from using ClassifierOutputTarget.
 
         cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W] }
         for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
@@ -427,8 +431,7 @@ if __name__ == '__main__':
                     cams.append(grayscale_cam)
 
                 cams = np.stack(cams)  # [C, H, W]
-                # cast cams to uint8  # note: attempt to save space
-                cams = (255 * cams).astype(np.uint8)
+                cams = (255 * cams).astype(np.uint8)  # uint8 to save space
 
                 cams_out.append({'cam': cams,
                                  'idx': idx,
@@ -436,40 +439,12 @@ if __name__ == '__main__':
                                  'path': batch['path'][i],  # strings are not tensors
                                  'pred': preds_classes[i],
                                  })
+
             # end of batch
         # end of dataset
-
         ''' Save CAMs '''
         cams_df = pd.DataFrame(cams_out)
         cams_df.to_pickle(join(cam_dir, 'cams.pkl.gz'), compression='gzip')
-        if False:
-            # from src.util import dol_from_lod
-            # cams_out = dol_from_lod(cams_out)
-            #
-            # cams_objs = [c['cam'] for c in cams_out]
-            # cams_objs = np.stack(cams_objs)  # [N, C, H, W] = [N, 5, 12, 12]
-            # idxs = [c['idx'] for c in cams_out]
-            # # save compressed numpy array
-            # np.savez_compressed(join(cam_dir, 'cams.npz'), cam=cams_objs, idx=idxs)
-            pass
-
-        if False:
-            ''' Average CAM per target class '''
-            canvas = None
-            target = 0
-            for c in cams_out:
-                cam_i = c['cam'][target]
-                if canvas is None:
-                    canvas = cam_i
-                else:
-                    canvas += cam_i
-
-            canvas /= len(cams_out)
-
-            plt.imshow(canvas)
-            # colorbar
-            plt.colorbar()
-            plt.show()
 
     ''' Old CAM generation with overlayed visualization '''
     # new approach (above) is to just generate-save, and analyse later

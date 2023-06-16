@@ -1,3 +1,4 @@
+# qsub -I -l select=1:ncpus=8:mem=32gb:ngpus=1:scratch_shm=true -q gpu -l walltime=1:30:00
 # singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:23.02-py3.SIF
 
 # copy files to scratch dir (memory-mapped)
@@ -36,10 +37,14 @@ done
 #	echo "perl -pe 's|\Q$FIND\E|$SCRATCHDIR|g' $file">
 #done
 
-pip install lime
+#pip install lime
+pip install pytorch-grad-cam
 
-
+# LIME generation
 CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime --limit 4 -w 1
+
+# CAMs generation
+CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 0 -t 4 -b 1 --cam
 
 
 # example output:
