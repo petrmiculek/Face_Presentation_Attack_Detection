@@ -26,7 +26,6 @@ import matplotlib
 # matplotlib.use('tkagg')  # helped for some plotting issues. Metacentrum-specific: see https://metavo.metacentrum.cz/en/software/python-modules/
 import matplotlib.pyplot as plt
 
-
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
 logging.getLogger('matplotlib').setLevel(logging.CRITICAL)
@@ -405,43 +404,42 @@ if __name__ == '__main__':
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        # methods_ = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
-        # methods_callables = [method(model=model, target_layer=target_layers, use_cuda=True) for method in methods_]
-        grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
+        method_modules = [GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad]
+        # methods_callables = [ for method in methods_]
+        # grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
         # ^ minor difference from using ClassifierOutputTarget.
 
         cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W] }
-        for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
-            ''' Predict (batch) '''
-            with torch.no_grad():
-                preds_raw = model(batch['image'].to(device)).cpu()
-                preds = F.softmax(preds_raw, dim=1).numpy()
-                preds_classes = np.argmax(preds, axis=1)
+        for method_module in method_modules:
+            cam_method = method_module(model=model, target_layers=target_layers, use_cuda=True)
+            for batch in tqdm(test_loader, mininterval=2., desc=cam_method.__class__.__name__):
+                ''' Predict (batch) '''
+                with torch.no_grad():
+                    preds_raw = model(batch['image'].to(device)).cpu()
+                    preds = F.softmax(preds_raw, dim=1).numpy()
+                    preds_classes = np.argmax(preds, axis=1)
 
-            ''' Generate CAMs for images in batch '''
-            for i, img in enumerate(batch['image']):
-                pred = preds[i]
-                idx = batch['idx'][i].item()
-                label = batch['label'][i].item()
-                cams = []
-                for t in targets:
-                    grayscale_cam = grad_cam(input_tensor=img[None, ...], targets=[t])  # img 4D
-                    grayscale_cam = grayscale_cam[0, ...]  # -> 3D
-                    cams.append(grayscale_cam)
+                ''' Generate CAMs for images in batch '''
+                for i, img in enumerate(batch['image']):
+                    pred = preds[i]
+                    idx = batch['idx'][i].item()
+                    label = batch['label'][i].item()
+                    cams = []
+                    for t in targets:
+                        grayscale_cam = cam_method(input_tensor=img[None, ...], targets=[t])  # img 4D
+                        grayscale_cam = grayscale_cam[0, ...]  # -> 3D
+                        cams.append(grayscale_cam)
 
-                cams = np.stack(cams)  # [C, H, W]
-                cams = (255 * cams).astype(np.uint8)  # uint8 to save space
+                    cams = np.stack(cams)  # [C, H, W]
+                    cams = (255 * cams).astype(np.uint8)  # uint8 to save space
 
-                cams_out.append({'cam': cams,
-                                 'idx': idx,
-                                 'label': label,
-                                 'path': batch['path'][i],  # strings are not tensors
-                                 'pred': preds_classes[i],
-                                 })
-
-            # end of batch
-        # end of dataset
+                    cams_out.append({'cam': cams, 'idx': idx,
+                                     'label': label, 'path': batch['path'][i],  # strings are not tensors
+                                     'pred': preds_classes[i], 'method': cam_method.__class__.__name__})
+                # end of batch
+            # end of dataset
+        # end of method
         ''' Save CAMs '''
         cams_df = pd.DataFrame(cams_out)
         cams_df.to_pickle(join(cam_dir, 'cams.pkl.gz'), compression='gzip')
