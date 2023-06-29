@@ -176,6 +176,9 @@ if __name__ == '__main__':
     - preprocess is obtained automatically in load_model, and applied in DataLoader. Do not use it manually.
     """
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+    if sum([args.lime, args.cam, args.eval, args.emb]) > 1:
+        raise ValueError('Only one of lime, cam, eval, emb can be set')
+
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
     run_dir = args.run
@@ -209,7 +212,7 @@ if __name__ == '__main__':
 
     ''' Initialization '''
     print(f"Available GPUs: {torch.cuda.device_count()}")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")  # TODO changed for debugging
     print(f'Running on device: {device}')
     print(f"Current device: {torch.cuda.current_device()}")
     print(f"Device name: {torch.cuda.get_device_name(0)}")
@@ -225,7 +228,7 @@ if __name__ == '__main__':
     torch.backends.cudnn.benchmark = False
     # todo extract init and seed application to respective functions [clean]
 
-    model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir)
+    model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir, device)
     print(f'Model: {config_dict["model_name"]} with {config_dict["num_classes"]} classes')
 
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
@@ -428,8 +431,8 @@ if __name__ == '__main__':
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [
-            GradCAM]  # [GradCAM, HiResCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM]  # ScoreCAM OOM, FullGrad too different
+        method_modules = [GradCAM, HiResCAM, GradCAMPlusPlus, AblationCAM, XGradCAM,
+                          EigenCAM]  # ScoreCAM OOM, FullGrad too different
         # methods_callables = [ for method in methods_]
         # grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
@@ -438,13 +441,13 @@ if __name__ == '__main__':
         percentages_kept = [100, 90, 70, 50, 30, 10, 0]
 
         cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W], TODO finish }
-        for method_module in method_modules:
-            cam_method = method_module(model=model, target_layers=target_layers, use_cuda=True)
+        for i_m, method_module in enumerate(method_modules):
+            cam_method = method_module(model=model, target_layers=target_layers, use_cuda=device.type == 'cuda')
             method_name = cam_method.__class__.__name__
-            print(f'{method_name}:')
+            print(f'{method_name} ({i_m + 1}/{len(method_modules)})')
             if 'batch_size' in cam_method.__dict__:  # AblationCAM
                 print(f'Orig batch size for {method_name}: {cam_method.batch_size}')
-                cam_method.batch_size = 32  # == default
+                cam_method.batch_size = 4  # default was 32
 
             for batch in tqdm(test_loader, mininterval=2., desc=method_name):
                 ''' Predict (batch) '''
@@ -483,7 +486,7 @@ if __name__ == '__main__':
                     scores_perturbed = [pred[pred_class]]  # [score of 100% kept (original)], skip in loop
                     for expl_percent_kept in percentages_kept[1:]:
                         threshold = np.percentile(cam_blurred, expl_percent_kept)
-                        cam_pred_mask = torch.Tensor(cam_blurred <= threshold).cuda()
+                        cam_pred_mask = torch.Tensor(cam_blurred <= threshold).to(device)
                         cams_perturbed.append(cam_pred_mask)
 
                         ''' Remove explained region '''
@@ -530,44 +533,11 @@ if __name__ == '__main__':
             # torch.cuda.empty_cache()
             ''' Save CAMs per method '''
             cams_df = pd.DataFrame(cams_out)
-            cams_df.to_pickle(join(cam_dir, f'cams-{method_name}.pkl.gz'), compression='gzip')
+            cams_df.to_pickle(join(cam_dir, f'cams-{method_name}-({limit if limit else "full"}).pkl.gz'),
+                              compression='gzip')
             # print('Not saving CAMs!')
         # end of all methods
 
-        ''' Plot Deletion Scores '''
-        if False:
-            scores = np.stack(cams_df['del_scores'].values)  # todo stack not necessary [clean]
-            idxs = cams_df['idx'].values
-            # scores - axis 0 is perturbation intensity, axis 1 is sample
-            # x = perturbation_intensities
-            # y = scores
-            # hue = sample
-            import seaborn as sns
-
-            plt.figure(figsize=(6, 4))
-            for i, scores_line in enumerate(scores):
-                sample_idx = idxs[i]
-                marker_random = get_marker(sample_idx)
-                plt.plot(percentages_kept, scores_line, label=sample_idx, marker=marker_random)
-
-            plt.xticks(percentages_kept)  # original x-values ticks
-            plt.gca().invert_xaxis()  # decreasing x axis
-            plt.ylim(0, 1.05)
-            plt.legend(title='Sample ID')
-            plt.ylabel('Prediction Score')
-            plt.xlabel('Perturbation Intensity (% of image kept)')
-            plt.title('Deletion Metric')
-
-            # remove top and right spines
-            plt.gca().spines['top'].set_visible(False)
-            plt.gca().spines['right'].set_visible(False)
-
-            plt.tight_layout()
-            output_path = join(cam_dir, 'deletion_metric-samples.png')
-            if output_path:
-                plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
-            if args.show:
-                plt.show()
 
     ''' Embeddings '''
     if args.emb:
