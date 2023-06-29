@@ -137,8 +137,24 @@ def save_i(path, file, overwrite=False):
 
 
 def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwargs):
+    """
+    Plot multiple images in a grid.
+
+    :param imgs: list of images to plot
+    :param title: figure title
+    :param titles: per-image titles
+    :param output_path: save figure to this path if not None
+    :param show: toggle showing the figure
+    :param kwargs: keyword arguments for imshow
+    """
     import torch
     from matplotlib import pyplot as plt
+
+    if len(imgs) == 1 and isinstance(imgs[0], (list, tuple)):
+        # unwrap imgs object if necessary (should be passed as plot_many(*imgs),
+        # but sometimes I forget and pass plot_many(imgs))
+        imgs = imgs[0]
+    imgs = list(imgs)  # if tuple, convert to list
     total = len(imgs)
     rows = 1 if total < 4 else int(np.ceil(np.sqrt(total)))
     cols = int(np.ceil(total / rows))
@@ -148,6 +164,10 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
 
     if title is not None:
         fig.suptitle(title)  # y=0.77 # height modification unused
+
+    # fill imgs with white 2x2 images if necessary
+    if total < rows * cols:
+        imgs.extend([np.ones((2, 2, 3))] * (rows * cols - total))
 
     # for loop over axes
     for i, img in enumerate(imgs):
@@ -161,8 +181,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
 
         if isinstance(img, torch.Tensor):
             img = np.array(img.cpu())
-        ndim = len(img.shape)
-        if ndim == 4:
+        if img.ndim == 4:
             img = img[0, ...]
         if img.shape[0] in [1, 3]:
             img = img.transpose(1, 2, 0)

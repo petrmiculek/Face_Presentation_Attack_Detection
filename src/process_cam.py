@@ -169,15 +169,15 @@ if __name__ == '__main__':
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
     run_dir = args.run
-    path_cams = join(run_dir, 'cam', 'cams-gradcam.pkl.gz')
-    cams_id = 'gradcam-re'
+    cam_dir = join(run_dir, 'cam')
+    path_cams = join(cam_dir, 'cams-GradCAM-200.pkl.gz')
+    cams_id = 'gradcam-200'
 
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
 
-    output_dir = join(run_dir, 'cam')
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(cam_dir, exist_ok=True)
 
     print('Loading model and setup from:', run_dir)
 
@@ -250,16 +250,86 @@ if __name__ == '__main__':
 
     ''' Per-image Deletion Metric Plot'''
     if False:
+        from src.util import get_marker
+
         # x: perturbation level
         # y: prediction drop
-        pass
+        percentages_kept = df['percentages_kept'].values[0]  # assume same for all
+        y = df['del_scores'].values
+        idxs = df['idx'].values
+
+        plt.figure(figsize=(6, 4))
+        for i, scores_line in enumerate(y):
+            sample_idx = idxs[i]
+            marker_random = get_marker(sample_idx)
+            plt.plot(percentages_kept, scores_line, label=sample_idx, marker=marker_random)
+
+        plt.xticks(percentages_kept)  # original x-values ticks
+        plt.gca().invert_xaxis()  # decreasing x axis
+        plt.ylim(0, 1.05)
+        # plt.legend(title='Sample ID')  # too long for per-sample legend
+        plt.ylabel('Prediction Score')
+        plt.xlabel('Perturbation Intensity (% of image kept)')
+        plt.title('Deletion Metric')
+
+        # remove top and right spines
+        plt.gca().spines['top'].set_visible(False)
+        plt.gca().spines['right'].set_visible(False)
+
+        plt.tight_layout()
+        output_path = join(cam_dir, 'deletion_metric-samples.png')
+        if output_path:
+            plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
+        if args.show:
+            plt.show()
 
     ''' Per-class Deletion Metric Plot'''
-    if False:
-        pass
+    if True:
         # x: perturbation level
         # y: prediction drop
         # hue: class
+        percentages_kept = df['percentages_kept'].values[0]  # assume same for all
+        y = df['del_scores'].values
+        preds = df['pred'].values
+        empty = []
+        for i, label in enumerate(label_names):
+            y_label = y[preds == i]
+
+            if len(y_label) == 0:
+                empty.append(label)
+                continue
+
+            y_label = np.stack(y_label)
+
+            mean_y = np.mean(y_label, axis=0)
+            std_y = np.std(y_label, axis=0)
+
+            # plot mean + std
+            plt.plot(percentages_kept, mean_y, label=label)
+            plt.fill_between(percentages_kept, mean_y - std_y, mean_y + std_y, alpha=0.2)
+
+        if len(empty):
+            print(f'Empty classes: {empty}')
+
+        plt.xticks(percentages_kept)  # original x-values ticks
+        plt.gca().invert_xaxis()  # decreasing x axis
+        plt.ylim(0, 1.05)
+        plt.legend(title='Class')
+        plt.ylabel('Prediction Score')
+        plt.xlabel('Perturbation Intensity (% of image kept)')
+        plt.title('Deletion Metric by Class')
+
+        # remove top and right spines
+        plt.gca().spines['top'].set_visible(False)
+        plt.gca().spines['right'].set_visible(False)
+
+        plt.tight_layout()
+        output_path = join(cam_dir, 'deletion_metric-classes.png')
+        if output_path:
+            plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
+        if args.show:
+            plt.show()
+        plt.close()
 
     ''' Per-image CAM for all classes '''
     if False:
@@ -269,11 +339,11 @@ if __name__ == '__main__':
             if s['idx'] != cam_entry['idx']:
                 print(f"index mismatch: {s['idx']}, {cam_entry['idx']}")
                 continue
-            output_path = join(run_dir, 'cam', f'{cams_id}-img-{s["idx"]}.png')
+            output_path = join(cam_dir, f'{cams_id}-img-{s["idx"]}.png')
             plot2x3(cam_entry, s['image'], output_path)
 
     ''' Average CAM by predicted category '''
-    if True:
+    if False:
         cams_pred = np.zeros(cam_shape)  # (c, h, w)
         # filter all RuntimeWarning
         with warnings.catch_warnings():
@@ -282,11 +352,11 @@ if __name__ == '__main__':
                 cams_pred[i] = np.mean(cams[preds == i], axis=0)[i]
         cams_pred[np.isnan(cams_pred)] = 0
 
-        output_path = join(run_dir, 'cam', f'{cams_id}-avg-class-pred.png')
+        output_path = join(cam_dir, f'{cams_id}-avg-class-pred.png')
         plot1x5(cams_pred, 'Average GradCAM per predicted class', output_path)
 
     ''' Average CAM by ground-truth category '''
-    if True:
+    if False:
         cams_gt = np.zeros(cam_shape)  # (c, h, w)
         with warnings.catch_warnings():
             warnings.filterwarnings(action='ignore')
@@ -294,11 +364,11 @@ if __name__ == '__main__':
                 cams_gt[i] = np.mean(cams[labels == i], axis=0)[i]
         cams_gt[np.isnan(cams_gt)] = 0
 
-        output_path = join(run_dir, 'cam', f'{cams_id}-avg-class-label.png')
+        output_path = join(cam_dir, f'{cams_id}-avg-class-label.png')
         plot1x5(cams_gt, 'Average GradCAM per ground-truth class', output_path)
 
     ''' Average CAM per (predicted, ground-truth) category '''
-    if True:
+    if False:
         # confusion matrix for CAMs
         cams_confmat = np.zeros((len(label_names), *cam_shape))  # (pred, label, h, w)
 
@@ -310,12 +380,12 @@ if __name__ == '__main__':
 
         cams_confmat[np.isnan(cams_confmat)] = 0
 
-        output_path = join(run_dir, 'cam', f'{cams_id}-avg-confmat.png')
+        output_path = join(cam_dir, f'{cams_id}-avg-confmat.png')
 
         plot5x5(cams_confmat, output_path)
 
     ''' Incorrect predictions: image, predicted and ground truth CAMs '''
-    if True:
+    if False:
         print(f'Incorrect predictions: {len(df[df["pred"] != df["label"]])} / {len(df)}')
 
         for i, row in df.iterrows():
@@ -333,7 +403,7 @@ if __name__ == '__main__':
             overlayed_pred = overlay_cam(img, cam_pred)
             overlayed_label = overlay_cam(img, cam_label)
 
-            output_path = join(run_dir, 'cam', f'{cams_id}-incorrect-pred-{idx}.png')
+            output_path = join(cam_dir, f'{cams_id}-incorrect-pred-{idx}.png')
             title = f'Prediction Error'
 
             # 1x3 figure: image, predicted cam, ground truth cam

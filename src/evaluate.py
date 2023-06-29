@@ -23,7 +23,7 @@ import torch.nn.functional as F
 import numpy as np
 
 import matplotlib
-# matplotlib.use('tkagg')  # helped for some plotting issues. Metacentrum-specific: see https://metavo.metacentrum.cz/en/software/python-modules/
+matplotlib.use('tkagg')  # helped for some plotting issues (console run, non-pycharm)
 import matplotlib.pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -399,14 +399,17 @@ if __name__ == '__main__':
                              show=True)
 
     ''' CAM Explanations  '''
-    from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, LayerCAM
-    # todo check more methods in the library
-    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget, ClassifierOutputSoftmaxTarget
-    from pytorch_grad_cam.utils.image import show_cam_on_image, deprocess_image, preprocess_image
-    from pytorch_grad_cam.metrics.cam_mult_image import CamMultImageConfidenceChange
-    from src.util import get_marker
-
     if args.cam:
+        from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
+            LayerCAM
+        # todo check more methods in the library
+        from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget, ClassifierOutputSoftmaxTarget
+        from pytorch_grad_cam.utils.image import show_cam_on_image, deprocess_image, preprocess_image
+        from pytorch_grad_cam.metrics.cam_mult_image import CamMultImageConfidenceChange
+        from src.util import get_marker
+        import cv2
+
+
         def deprocess(img):
             import torch
             if isinstance(img, torch.Tensor):
@@ -432,8 +435,9 @@ if __name__ == '__main__':
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
         #           ^ minor visual difference from ClassifierOutputTarget.
         cam_metric = CamMultImageConfidenceChange()  # DropInConfidence()
+        percentages_kept = [100, 90, 70, 50, 30, 10, 0]
 
-        cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W] }
+        cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W], TODO finish }
         for method_module in method_modules:
             cam_method = method_module(model=model, target_layers=target_layers, use_cuda=True)
             method_name = cam_method.__class__.__name__
@@ -459,114 +463,55 @@ if __name__ == '__main__':
                     idx = batch['idx'][i].item()
                     label = batch['label'][i].item()
                     cams = []
-                    print(f'idx: {idx}, pred: {pred_class_name}, label: {label_names[label]}')
 
                     ''' Generate CAMs for all classes (targets) '''
                     for j, t in enumerate(targets):
                         grayscale_cam = cam_method(input_tensor=img[None, ...], targets=[t])  # img 4D
                         cams.append(grayscale_cam)
 
-                    cam_pred = cams[pred_class]
+                    # only work with CAM for the predicted class
+                    cam_pred = cams[pred_class][0]
 
-                    ''' Blur CAM '''
-                    sigma = config.blur_kernel_size
-                    cam_blurred = cam_pred[0] + cv2.blur(cam_pred[0], (sigma, sigma))
-                    # rank pixels by descending CAM value
-                    cam_ranking = np.argsort(cam_blurred.flatten())[::-1]
-
-                    masked_cams = [cam_pred]
-                    ratios = [0]
-                    for removed_ratio in [0.1, 0.3, 0.5, 0.7, 0.9]:
-                        n_to_remove = int(removed_ratio * len(cam_ranking))
-                        to_remove = cam_ranking[:n_to_remove]
-
-                        mask_kept = np.zeros_like(cam_ranking) + 1
-                        mask_kept[to_remove] = 0
-                        mask_kept = mask_kept.reshape(cam_blurred.shape)
-                        # apply mask
-                        masked_cam = cam_blurred * mask_kept
-                        masked_cams.append(masked_cam)
-                        ratios.append(removed_ratio)
-
-                    # plot_many(*masked_cams, title='Masks', titles=[f'{r:.2f}' for r in ratios], vmin=0, vmax=1)
+                    # resize to original image size
+                    wh_image = (img.shape[1], img.shape[2])
+                    if cam_pred.shape != wh_image:
+                        cam_pred = cv2.resize(cam_pred, wh_image)
 
                     ''' Remove explained region from image '''
-                    cams_perturbed = [cam_pred]
-                    scores_perturbed = [pred[pred_class]]
-                    perturbation_intensities = [90, 70, 50, 30, 10, 0]  # percent of explanation kept
-                    for expl_percent_kept in perturbation_intensities:
-                        cam_impute_base = cam_pred[cam_pred > -100]  # delete from total CAM mask, or only nonzero?
-                        threshold = np.percentile(cam_impute_base, expl_percent_kept)
-                        cam_pred_mask = torch.Tensor(cam_pred < threshold).cuda()
+                    cam_blurred = cam_pred + cv2.blur(cam_pred, (config.blur_kernel_size, config.blur_kernel_size))
+                    cams_perturbed = [cam_blurred]
+                    scores_perturbed = [pred[pred_class]]  # [score of 100% kept (original)], skip in loop
+                    for expl_percent_kept in percentages_kept[1:]:
+                        threshold = np.percentile(cam_blurred, expl_percent_kept)
+                        cam_pred_mask = torch.Tensor(cam_blurred <= threshold).cuda()
                         cams_perturbed.append(cam_pred_mask)
 
                         ''' Remove explained region '''
                         img_masked = (img * cam_pred_mask)[None, ...]
                         img_masked_plotting = img_plotting * cam_pred_mask.cpu().numpy()
-                        print(f'explanation kept: {expl_percent_kept} %')
+                        # print(f'explanation kept: {expl_percent_kept} %')
                         total_percent_kept = 100 * cam_pred_mask.sum() / cam_pred_mask.numel()
-                        print(f'total image kept: {total_percent_kept:.2f} %')
+                        # print(f'total image kept: {total_percent_kept:.2f} %')  # now should be same as expl_percent_kept
 
                         ''' Predict on perturbed image '''
                         with torch.no_grad():  # prediction on modified image (single, not batched)
                             preds_raw_perturbed_b = model(img_masked).cpu()
                             preds_perturbed_b = F.softmax(preds_raw_perturbed_b, dim=1).numpy()
                             preds_classes_perturbed_b = np.argmax(preds_perturbed_b, axis=1)
-                            pred_score_perturbed = preds_perturbed_b[0, preds_classes_b][
-                                0]  # not taking the top class for perturbed prediction!
+                            pred_score_perturbed = preds_perturbed_b[0, preds_classes_b][0]
+                            # not taking the top class for perturbed prediction ^^^.
 
                         ''' Compute Deletion Score '''
                         deletion_score = pred_score_perturbed - pred[pred_class]
-                        print(f'orig: {pred}')
-                        print(f'pert: {preds_perturbed_b}')
-                        print(f'score: {pred_score_perturbed:.4f}, drop: {deletion_score:.4f}\n')
+                        # print(f'orig: {pred}\npert: {preds_perturbed_b}\nscore: {pred_score_perturbed:.4f}, drop: {deletion_score:.4f}\n')
                         scores_perturbed.append(pred_score_perturbed)
 
-                        cam2 = cam_method(input_tensor=img_masked, targets=[targets[pred_class]])
+                        # cam2 = cam_method(input_tensor=img_masked, targets=[targets[pred_class]])
                         output_path = join(cam_dir, f'deletion_{idx}_{method_name}_kept{expl_percent_kept}.png')
-                        plot_many(img_plotting, cam_pred, cam_pred_mask, img_masked_plotting, cam2,
-                                  title=f'{method_name}\npredicted: {pred_class_name} ({pred[pred_class]:.4f})\n'
-                                        f'{expl_percent_kept}% cam kept,{total_percent_kept:.0f}% of total\n'
-                                        f'drop: {deletion_score:.4f}',
-                                  output_path=output_path, show=False)
-                        raise UserWarning()
-
-                    if False:
-                        # baseline predictions - should give neutral scores 1/C. Not true here.
-                        zeros = img[None, ...] * 0
-                        ones = zeros + 1
-                        imagenet_channel_mean = torch.Tensor([0.485, 0.456, 0.406]).to(device)
-                        means = zeros + imagenet_channel_mean[None, :, None, None]
-                        zeros_pred = F.softmax(model(zeros), dim=1).detach().cpu().numpy()
-                        ones_pred = F.softmax(model(ones), dim=1).detach().cpu().numpy()
-                        mean_pred = F.softmax(model(means), dim=1).detach().cpu().numpy()
-
-                    if False:
-                        pass
-                        # scores = []  # before, after cams = []
-
-                        # for j, t in enumerate(targets):
-                        #     cm_kwargs = {'targets': [t], 'model': model,  # more targets only works for batching, not for a single-sample prediction
-                        #                  'return_visualization': False, 'return_diff': False}
-                        #     # check for min grayscale_cam value
-                        #     if grayscale_cam.min() < 0:
-                        #         print(f'Negative min value for {method_name}!')
-                        #         grayscale_cam -= np.min(grayscale_cam)
-                        #
-                        #     thresholded_cam = grayscale_cam >= np.percentile(grayscale_cam, 70)
-                        #     grayscale_cam = thresholded_cam
-                        #
-                        #     score = cam_metric(img[None, ...], grayscale_cam, **cm_kwargs)[0]
-                        #     inverse_cam = 1 - grayscale_cam
-                        #     inv_score = cam_metric(img[None, ...], inverse_cam, **cm_kwargs)[0]
-                        #
-                        #     grayscale_cam = grayscale_cam[0, ...]  # -> 3D
-                        #     scores.append(score)
-                        #     # 1x2 figure, grayscale_cam, inverse_cam
-                        #     # plot_many(grayscale_cam, inverse_cam)
-                        #     img_hwc = img.permute(1, 2, 0).cpu().numpy()
-                        #
-                        #     print(f'{method_name}: Orig = {pred[j]:.3f}, DelCAM = {inv_score:.3f}, DelInvCAM = {inv_score:.3f}')
+                        plot_many(img_plotting, cam_pred, cam_pred_mask, img_masked_plotting,
+                                  title=f'{method_name}, idx: {idx}\npredicted: {pred_class_name} ({pred[pred_class]:.4f})\n'
+                                        f'{expl_percent_kept}% kept, drop: {deletion_score:.4f}',
+                                  titles=['original', 'cam', 'mask', 'masked'], output_path=output_path, show=False)
 
                     cams = np.stack(cams)  # [C, H, W]
                     cams = (255 * cams).astype(np.uint8)  # uint8 to save space
@@ -574,7 +519,8 @@ if __name__ == '__main__':
                     cams_out.append({'cam': cams, 'idx': idx,
                                      'method': method_name, 'path': batch['path'][i],  # strings are not tensors
                                      'label': label, 'pred': preds_classes_b[i],
-                                     'del_scores': scores_perturbed, 'pred_scores': preds_b[i]})
+                                     'del_scores': scores_perturbed, 'pred_scores': preds_b[i],
+                                     'percentages_kept': percentages_kept})
                     # end of batch
                 # end of dataset
             # end of method
@@ -584,27 +530,27 @@ if __name__ == '__main__':
             # torch.cuda.empty_cache()
             ''' Save CAMs per method '''
             cams_df = pd.DataFrame(cams_out)
-            # cams_df.to_pickle(join(cam_dir, f'cams-{method_name}.pkl.gz'), compression='gzip')
-            print('Not saving CAMs!')
+            cams_df.to_pickle(join(cam_dir, f'cams-{method_name}.pkl.gz'), compression='gzip')
+            # print('Not saving CAMs!')
         # end of all methods
 
         ''' Plot Deletion Scores '''
         if False:
-            scores = np.stack(cams_df['del_scores'].values)
+            scores = np.stack(cams_df['del_scores'].values)  # todo stack not necessary [clean]
             idxs = cams_df['idx'].values
+            # scores - axis 0 is perturbation intensity, axis 1 is sample
             # x = perturbation_intensities
-            # y = scores - axis 0 is perturbation intensity, axis 1 is sample
+            # y = scores
             # hue = sample
             import seaborn as sns
 
-            xticks = [100] + perturbation_intensities
             plt.figure(figsize=(6, 4))
             for i, scores_line in enumerate(scores):
                 sample_idx = idxs[i]
                 marker_random = get_marker(sample_idx)
-                plt.plot(xticks, scores_line, label=sample_idx, marker=marker_random)
+                plt.plot(percentages_kept, scores_line, label=sample_idx, marker=marker_random)
 
-            plt.xticks(xticks)  # original x-values ticks
+            plt.xticks(percentages_kept)  # original x-values ticks
             plt.gca().invert_xaxis()  # decreasing x axis
             plt.ylim(0, 1.05)
             plt.legend(title='Sample ID')
@@ -617,10 +563,11 @@ if __name__ == '__main__':
             plt.gca().spines['right'].set_visible(False)
 
             plt.tight_layout()
-            output_path = join(cam_dir, 'deletion_metric.png')
+            output_path = join(cam_dir, 'deletion_metric-samples.png')
             if output_path:
                 plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
-            plt.show()
+            if args.show:
+                plt.show()
 
     ''' Embeddings '''
     if args.emb:
@@ -717,7 +664,7 @@ if __name__ == '__main__':
         """
 
     t1 = time.perf_counter()
-    print(f'Execution finished in {t1 - t0:.2f}s')  # everything after dataset is loaded
+    print(f'Execution finished in {t1 - t0:.2f}s')  # since dataset loaded
 
     ''' Sandbox Area'''
     aug = False
