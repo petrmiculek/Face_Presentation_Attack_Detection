@@ -23,7 +23,7 @@ import torch.nn.functional as F
 import numpy as np
 
 import matplotlib
-matplotlib.use('tkagg')  # helped for some plotting issues (console run, non-pycharm)
+# matplotlib.use('tkagg')  # helped for some plotting issues (local console run, does not work on metacentrum)
 import matplotlib.pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -351,7 +351,7 @@ if __name__ == '__main__':
                     output_path = join(lime_dir, f'{idx[i]}_pos.png')
 
                     show_lime_image(explanation, img_for_lime, lime_kwargs, title, output_path=output_path)
-                    # show_lime_image(explanation, img_for_lime, lime_kwargs, title, show=True)
+                    # show_lime_image(explanation, img_for_lime, lime_kwargs, title, show=args.show)
 
                     # positive and negative
                     title = f'LIME explanation (pos+neg), pred {pred_top1_name}, GT {label_name}'
@@ -359,7 +359,7 @@ if __name__ == '__main__':
                     output_path = join(lime_dir, f'{idx[i]}_pos_neg.png')
 
                     show_lime_image(explanation, img_for_lime, lime_kwargs, title, output_path=output_path)
-                    # show_lime_image(explanation, img_for_lime, lime_kwargs, title, show=True)
+                    # show_lime_image(explanation, img_for_lime, lime_kwargs, title, show=args.show)
 
         labels = torch.cat(labels).numpy()
         idxs = torch.cat(idxs).numpy()
@@ -391,7 +391,7 @@ if __name__ == '__main__':
         if True:
             cm_location = join(output_dir, 'confusion_matrix.pdf')
             confusion_matrix(outputs_test['labels'], outputs_test['preds'], output_location=cm_location,
-                             labels=label_names, show=True)
+                             labels=label_names, show=args.show)
 
             cm_binary_location = join(output_dir, 'confusion_matrix_binary.pdf')
             label_names_binary = ['genuine', 'attack']
@@ -399,10 +399,21 @@ if __name__ == '__main__':
             labels_binary = outputs_test['labels'] != bona_fide
 
             confusion_matrix(labels_binary, preds_binary, output_location=cm_binary_location, labels=label_names_binary,
-                             show=True)
+                             show=args.show)
 
     ''' CAM Explanations  '''
     if args.cam:
+        """
+        Features:
+        - AUC
+            - per-class
+            - how to normalize
+        Baselines:
+        - blur image instead of black
+        - random weights
+        - sobel explanation
+        - centered circle explanation
+        """
         from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
             LayerCAM
         # todo check more methods in the library
@@ -431,8 +442,8 @@ if __name__ == '__main__':
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [GradCAM, HiResCAM, GradCAMPlusPlus, AblationCAM, XGradCAM,
-                          EigenCAM]  # ScoreCAM OOM, FullGrad too different
+        method_modules = [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM,
+                          EigenCAM]  # ScoreCAM OOM, FullGrad too different; AblationCAM runs long
         # methods_callables = [ for method in methods_]
         # grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
@@ -447,7 +458,7 @@ if __name__ == '__main__':
             print(f'{method_name} ({i_m + 1}/{len(method_modules)})')
             if 'batch_size' in cam_method.__dict__:  # AblationCAM
                 print(f'Orig batch size for {method_name}: {cam_method.batch_size}')
-                cam_method.batch_size = 4  # default was 32
+                cam_method.batch_size = 128  # default == 32; adan (8gb) can handle 128
 
             for batch in tqdm(test_loader, mininterval=2., desc=method_name):
                 ''' Predict (batch) '''
@@ -514,7 +525,7 @@ if __name__ == '__main__':
                         plot_many(img_plotting, cam_pred, cam_pred_mask, img_masked_plotting,
                                   title=f'{method_name}, idx: {idx}\npredicted: {pred_class_name} ({pred[pred_class]:.4f})\n'
                                         f'{expl_percent_kept}% kept, drop: {deletion_score:.4f}',
-                                  titles=['original', 'cam', 'mask', 'masked'], output_path=output_path, show=False)
+                                  titles=['original', 'cam', 'mask', 'masked'], output_path=output_path, show=args.show)
 
                     cams = np.stack(cams)  # [C, H, W]
                     cams = (255 * cams).astype(np.uint8)  # uint8 to save space
@@ -533,8 +544,8 @@ if __name__ == '__main__':
             # torch.cuda.empty_cache()
             ''' Save CAMs per method '''
             cams_df = pd.DataFrame(cams_out)
-            cams_df.to_pickle(join(cam_dir, f'cams-{method_name}-({limit if limit else "full"}).pkl.gz'),
-                              compression='gzip')
+            output_path = join(cam_dir, f'cams_{method_name}_{limit if limit else "full"}.pkl.gz')
+            cams_df.to_pickle(output_path, compression='gzip')
             # print('Not saving CAMs!')
         # end of all methods
 
