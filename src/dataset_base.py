@@ -114,12 +114,16 @@ def StandardLoader(dataset_class, annotations, **kwargs):
     return loader
 
 
-def pick_dataset_version(name, mode):
+def pick_dataset_version(name, mode, attack=None):
     """
     Pick dataset version.
 
+    note: `available` is updated, as `datasets` is filtered.
+    ^ Don't try to simplify the code by reusing `available` many times.
+
     :param name: dataset name
     :param mode: training mode
+    :param attack: attack number
     :return: metadata pandas series
     """
     path_datasets_csv = join('dataset_lists', 'datasets.csv')  # todo make into a parameter [clean]
@@ -138,6 +142,14 @@ def pick_dataset_version(name, mode):
     if len(datasets) == 0:
         raise ValueError(f'No dataset with name {name} and mode {mode}. '
                          f'Available datasets:\n{available}')
+
+    available = datasets[['dataset_name', 'training_mode', 'attack_test']].values
+    # filter by attack
+    if attack is not None:
+        datasets = datasets[datasets['attack_test'] == attack]
+        if len(datasets) == 0:
+            raise ValueError(f'No dataset with name {name}, mode {mode} and attack {attack}. '
+                             f'Available datasets:\n{available}')
 
     elif len(datasets) > 1:
         available = datasets[['dataset_name', 'training_mode']].values

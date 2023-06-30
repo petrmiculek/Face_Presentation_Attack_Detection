@@ -48,13 +48,16 @@ from dataset_base import pick_dataset_version, load_dataset
 # local
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', help='dataset to train on', type=str, default='rose_youtu')
-parser.add_argument('-a', '--model', help='model name', type=str, default='resnet18')  # efficientnet_v2_s
+parser.add_argument('-a', '--arch', help='model architecture', type=str, default='resnet18')  # efficientnet_v2_s
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
 parser.add_argument('-e', '--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
 parser.add_argument('-l', '--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
+parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
+parser.add_argument('-k', '--attack', help='attack for unseen_attack and one_attack modes (1-N)', type=str,
+                    default=None)  # falsy default value: also ''
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
 
@@ -118,6 +121,7 @@ if __name__ == '__main__':
     elif training_mode == 'unseen_attack':
         label_names = label_names_binary
         num_classes = 2
+
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
 
@@ -149,6 +153,7 @@ if __name__ == '__main__':
         show_plots = False
         print('Not running in Pycharm, not displaying plots')
 
+    ''' Device Info '''
     if True:
         # check available gpus
         print(f"Available GPUs: {torch.cuda.device_count()}")
@@ -164,7 +169,7 @@ if __name__ == '__main__':
 
     ''' Model '''
     if True:
-        model_name = args.model
+        model_name = args.arch
         model, preprocess = load_model(model_name, num_classes)
 
         # freeze all previous layers
@@ -199,25 +204,33 @@ if __name__ == '__main__':
 
     ''' Dataset '''
     if True:
-        dataset_meta = pick_dataset_version(args.dataset, args.mode)
-        attack_train = dataset_meta['attack_train']
-        attack_val = dataset_meta['attack_val']
-        attack_test = dataset_meta['attack_test']
-        limit = -1  # -1 for no limit
+        dataset_meta = pick_dataset_version(args.dataset, args.mode, attack=args.attack)
+
+
+        def parse_str_list(x):
+            return list(map(int, x[1:-1].split(',')))
+
+
+        def parse_str(x):
+            try:
+                return int(x)
+            except ValueError:
+                return parse_str_list(x)
+
+
+        attack_train = parse_str(dataset_meta['attack_train'])
+        attack_val = parse_str(dataset_meta['attack_val'])
+        attack_test = parse_str(dataset_meta['attack_test'])
+        limit = args.limit if args.limit else -1  # -1 for no limit
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
                          'pin_memory': True, 'seed': seed,
                          'transform_train': preprocess['train'], 'transform_eval': preprocess['eval']}
         train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
                                                              quiet=False, **loader_kwargs)
         bona_fide = dataset_module.bona_fide_unified
-
-        len_train_ds = len(train_loader.dataset)
-        len_val_ds = len(val_loader.dataset)
-        len_test_ds = len(test_loader.dataset)
-
-        len_train_loader = len(train_loader)
-        len_val_loader = len(val_loader)
-        len_test_loader = len(test_loader)
+        len_train_ds, len_val_ds, len_test_ds = len(train_loader.dataset), len(val_loader.dataset), len(
+            test_loader.dataset)
+        len_train_loader, len_val_loader, len_test_loader = len(train_loader), len(val_loader), len(test_loader)
 
     ''' Logging '''
     wb.config.update(
@@ -289,43 +302,44 @@ if __name__ == '__main__':
 
                         # compute accuracy
                         prediction_hard = torch.argmax(out, dim=1)
-                        # match = prediction_hard == label
 
                         # save predictions
                         labels_train.append(label.cpu().numpy())
                         preds_train.append(prediction_hard.cpu().numpy())
 
-                        progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
+                    progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
+            # end of training epoch loop
 
         except KeyboardInterrupt:
-            print('Ctrl+C stopped training')
+            print(f'Ctrl+C stopped training')
             stop_training = True
 
         # compute training metrics
-        preds_train = np.concatenate(preds_train)
-        labels_train = np.concatenate(labels_train)
-
+        preds_train, labels_train = np.concatenate(preds_train), np.concatenate(labels_train)
         metrics_train = compute_metrics(labels_train, preds_train)
 
         ''' Validation loop '''
         model.eval()
         ep_loss_val = 0.0
-        preds_val = []
-        labels_val = []
+        preds_val, labels_val = [], []
         with torch.no_grad():
-            for sample in tqdm(val_loader, leave=True, mininterval=1., desc=f'ep{epoch} val'):
-                img, label = sample['image'], sample['label']
-                img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-                out = model(img)
-                loss = criterion(out, label)
-                ep_loss_val += loss.cpu().numpy()
+            with tqdm(val_loader, leave=True, mininterval=1., desc=f'ep{epoch} val') as progress_bar:
+                for sample in progress_bar:
+                    img, label = sample['image'], sample['label']
+                    img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
+                    out = model(img)
+                    loss = criterion(out, label)
+                    ep_loss_val += loss.cpu().numpy()
 
-                # compute accuracy
-                prediction_hard = torch.argmax(out, dim=1)
+                    # compute accuracy
+                    prediction_hard = torch.argmax(out, dim=1)
 
-                # save prediction
-                labels_val.append(label.cpu().numpy())
-                preds_val.append(prediction_hard.cpu().numpy())
+                    # save prediction
+                    labels_val.append(label.cpu().numpy())
+                    preds_val.append(prediction_hard.cpu().numpy())
+
+                    progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
+        # end of validation loop
 
         # loss is averaged over batch already, divide by batch number
         ep_train_loss /= len_train_loader
@@ -376,26 +390,30 @@ if __name__ == '__main__':
     model.eval()
     preds_test = []
     labels_test = []
+    total_loss_test = 0
+    total_correct_test = 0
     with torch.no_grad():
-        total_loss_test = 0
-        total_correct_test = 0
-        for sample in tqdm(test_loader, leave=False, mininterval=1., desc=f'test'):
-            img, label = sample['image'], sample['label']
-            img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-            out = model(img)
-            loss = criterion(out, label)
-            total_loss_test += loss.detach().cpu().numpy()
+        with tqdm(test_loader, leave=False, mininterval=1., desc=f'test') as progress_bar:
+            for sample in progress_bar:
+                img, label = sample['image'], sample['label']
+                img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
+                out = model(img)
+                loss = criterion(out, label)
+                total_loss_test += loss.detach().cpu().numpy()
 
-            # compute accuracy
-            prediction_hard = torch.argmax(out, dim=1)
-            match = prediction_hard == label
-            total_correct_test += match.sum().detach().cpu().numpy()
+                # compute accuracy
+                prediction_hard = torch.argmax(out, dim=1)
+                match = prediction_hard == label
+                total_correct_test += match.sum().detach().cpu().numpy()
 
-            # save predictions
-            labels_test.append(label.cpu().numpy())
-            preds_test.append(prediction_hard.cpu().numpy())
+                # save predictions
+                labels_test.append(label.cpu().numpy())
+                preds_test.append(prediction_hard.cpu().numpy())
+
+                progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
 
         loss_test = total_loss_test / len_test_loader
+    # end of test loop
 
     metrics_test = compute_metrics(labels_test, preds_test)
 
@@ -421,7 +439,7 @@ if __name__ == '__main__':
                        f'\ntrain: {attack_train_name}({attack_train}), ' \
                        f'test:{attack_test_name}({attack_test})'
     elif args.mode == 'unseen_attack':
-        attack_test_name = dataset_module.label_names_unified[args.attack_test]
+        attack_test_name = dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
                        f'\ntrain: all but test, ' \
                        f'test:{attack_test_name}({attack_test})'

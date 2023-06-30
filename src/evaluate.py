@@ -60,7 +60,7 @@ criterion = None
 parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, run explanation methods'
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=None)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=None)
-# parser.add_argument('-d','--model', help='model name', type=str, default='resnet18')
+# parser.add_argument('-a','--arch', help='model architecture', type=str, default='resnet18')
 # parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)',
 #                     type=str, default=None)
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
