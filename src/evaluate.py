@@ -7,9 +7,8 @@ import sys
 import time
 from os.path import join
 
-# fix for local import problems - add all local directories
-sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
-sys.path.extend(sys_path_extension)
+# fix for local import problems
+sys.path.append(os.getcwd())  # + [d for d in os.listdir() if os.path.isdir(d)]
 
 # external
 from sklearn.metrics import classification_report
@@ -37,7 +36,8 @@ pil_logger.setLevel(logging.INFO)
 # import dataset_rose_youtu as dataset
 from metrics import compute_metrics, confusion_matrix  # , accuracy
 from util import print_dict, save_i, keys_append, plot_many
-from model_util import load_model
+from util_torch import init_device, init_seed, load_model_eval, get_dataset_module
+from dataset_base import pick_dataset_version, load_dataset
 import config
 
 run_dir = ''
@@ -60,7 +60,6 @@ criterion = None
 parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, run explanation methods'
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=None)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=None)
-# parser.add_argument('-a','--arch', help='model architecture', type=str, default='resnet18')
 # parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)',
 #                     type=str, default=None)
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
@@ -74,11 +73,16 @@ parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
 parser.add_argument('-z', '--show', help='show outputs', action='store_true')
 
 
-# ^ the 4 above (lime, cam, eval, emb) are so far considered exclusive, although not enforced to be so
-
+def predict(model, inputs):
+    """ Predict on batch, return Numpy preds and classes. """
+    with torch.no_grad():
+        preds_raw = model(inputs)
+        probs = F.softmax(preds_raw, dim=1).cpu().numpy()
+        classes = np.argmax(probs, axis=1)
+    return probs, classes
 
 def eval_loop(loader):
-    """ Evaluate model on dataset """
+    """ Evaluate model on dataset. """
     len_loader = len(loader)
     ep_loss = 0.0
     preds = []
@@ -152,20 +156,6 @@ def get_preds(dataset_loader, split_name, output_dir, new=True, save=True):
     return {'labels': labels, 'preds': preds, 'paths': paths}
 
 
-def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
-    """ Load Model """
-    model_name = model_name
-    model, preprocess = load_model(model_name, num_classes)
-    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt'), map_location=device), strict=False)
-    model.to(device)
-    model.eval()
-    # sample model prediction
-    out = model(torch.rand(1, 3, 224, 224).to(device)).shape  # hardcoded input size will fail at some point
-    # assert shape is (1, num_classes)
-    assert out == (1, num_classes), f'Model output shape is {out}'
-
-    return model, preprocess
-
 
 # def main():
 #     global model, device, criterion  # disable when not using def main
@@ -188,7 +178,6 @@ if __name__ == '__main__':
 
     output_dir = join(run_dir, 'eval')
     os.makedirs(output_dir, exist_ok=True)
-
     print('Loading model and setup from:', run_dir)
 
     ''' Arguments '''
@@ -202,41 +191,19 @@ if __name__ == '__main__':
 
     training_mode = config_dict['mode']  # 'all_attacks'
     dataset_name = config_dict['dataset']  # 'rose_youtu'
-    # load dataset module
-    if dataset_name == 'rose_youtu':
-        import dataset_rose_youtu as dataset_module
-    elif dataset_name == 'siwm':
-        import dataset_siwm as dataset_module
-    else:
-        raise ValueError(f'Unknown dataset name {dataset_name}')
+    dataset_module = get_dataset_module(dataset_name)
 
     ''' Initialization '''
-    print(f"Available GPUs: {torch.cuda.device_count()}")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")  # TODO changed for debugging
-    print(f'Running on device: {device}')
-    print(f"Current device: {torch.cuda.current_device()}")
-    print(f"Device name: {torch.cuda.get_device_name(0)}")
-
-    np.set_printoptions(precision=3, suppress=True)  # human-readable printing
-
-    seed = args.seed if args.seed is not None else config.seed_eval_default  # 42
-    print(f'Random seed: {seed}')
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    # todo extract init and seed application to respective functions [clean]
+    device = init_device()
+    seed = args.seed if args.seed is not None else config.seed_eval_default
+    init_seed(seed)
 
     model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir, device)
     print(f'Model: {config_dict["model_name"]} with {config_dict["num_classes"]} classes')
-
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
 
     ''' Load Data '''
     if True:
-        from dataset_base import pick_dataset_version, load_dataset
-
         dataset_meta = pick_dataset_version(dataset_name, training_mode)
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
@@ -259,7 +226,6 @@ if __name__ == '__main__':
         print('Generating LIME explanations')
         from lime import lime_image
         from skimage.segmentation import mark_boundaries
-        import matplotlib.pyplot as plt
 
 
         def convert_for_lime(img):
@@ -277,18 +243,16 @@ if __name__ == '__main__':
             :return: softmax-ed probabilities
             """
             img0 = torch.tensor(images)
-            if len(img0.shape) == 3:
+            if len(img0.shape) == 3:  # img0.ndim
                 img0 = img0.unsqueeze(0)
 
             if img0.dtype == torch.uint8:
                 img0 = img0.float() / 255.
 
             img0 = img0.permute(0, 3, 1, 2).to(device)
-            with torch.no_grad():
-                logits = model(img0)
-                probs = F.softmax(logits, dim=1)
-                res = probs.cpu().numpy()
-            return res
+
+            probs, _ = predict(model, img0)
+            return probs
 
 
         def show_lime_image(explanation, img, lime_kwargs, title=None, show=False, output_path=None):
@@ -314,14 +278,11 @@ if __name__ == '__main__':
 
 
         nums_to_names = dataset_module.nums_to_unified
-
         explainer = lime_image.LimeImageExplainer(random_state=seed)
-
         labels = []
         paths = []
         preds = []
         idxs = []
-
         lime_dir = join(output_dir, 'lime')
         os.makedirs(lime_dir, exist_ok=True)
 
@@ -338,13 +299,10 @@ if __name__ == '__main__':
                     explanation = explainer.explain_instance(img_for_lime, predict_lime, batch_size=16,
                                                              top_labels=1, hide_color=0, num_samples=1000,
                                                              progress_bar=False, random_seed=seed)
-
                     pred_top1 = explanation.top_labels[0]
                     preds.append(pred_top1)
                     pred_top1_name = nums_to_names[pred_top1]
-
                     label_name = label_names[label[i]]
-
                     # positive-only
                     title = f'LIME explanation (pos), pred {pred_top1_name}, GT {label_name}'
                     lime_kwargs = {'positive_only': True, 'num_features': 5, 'hide_rest': False}
@@ -374,10 +332,8 @@ if __name__ == '__main__':
     if args.eval:
         ''' Training set '''
         # outputs_train = get_preds(train_loader, 'train', output_dir, new=True, save=True)
-
         ''' Validation set '''
         # outputs_val = get_preds(val_loader, 'val', output_dir, new=True, save=True)
-
         ''' Test set '''
         outputs_test = get_preds(test_loader, 'test', output_dir, new=True, save=True)
 
@@ -406,37 +362,23 @@ if __name__ == '__main__':
         """
         Features:
         - AUC
-            - per-class
+            - per-class  #done#
             - how to normalize
         Baselines:
-        - blur image instead of black
+        - blur image instead of black  #done#
         - random weights
         - sobel explanation
         - centered circle explanation
+        
+        - check that percent_kept = 0 leads to black image  #done#
         """
         from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
             LayerCAM
         # todo check more methods in the library
-        from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget, ClassifierOutputSoftmaxTarget
-        from pytorch_grad_cam.utils.image import show_cam_on_image, deprocess_image, preprocess_image
+        from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
         from pytorch_grad_cam.metrics.cam_mult_image import CamMultImageConfidenceChange
-        from src.util import get_marker
         import cv2
-
-
-        def deprocess(img):
-            import torch
-            if isinstance(img, torch.Tensor):
-                img = img.detach().cpu().numpy()  # might fail when no grad
-                img = img.transpose(1, 2, 0)
-            img = img - np.mean(img)
-            img = img / (np.std(img) + 1e-5)
-            img = img * 0.1
-            img = img + 0.5
-            img = np.clip(img, 0, 1)
-            # don't make image uint8
-            return img
-
+        from src.util_image import deprocess
 
         cam_dir = join(run_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
@@ -450,6 +392,7 @@ if __name__ == '__main__':
         #           ^ minor visual difference from ClassifierOutputTarget.
         cam_metric = CamMultImageConfidenceChange()  # DropInConfidence()
         percentages_kept = [100, 90, 70, 50, 30, 10, 0]
+        perturbed_percentages_kept = percentages_kept[1:]  # 100% was the original, so skip it
 
         cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W], TODO finish }
         for i_m, method_module in enumerate(method_modules):
@@ -463,22 +406,20 @@ if __name__ == '__main__':
             for batch in tqdm(test_loader, mininterval=2., desc=method_name):
                 ''' Predict (batch) '''
                 img_batch = batch['image'].to(device)
-                with torch.no_grad():  # prediction on original image (batch)
-                    preds_raw_b = model(img_batch).cpu()
-                    preds_b = F.softmax(preds_raw_b, dim=1).numpy()
-                    preds_classes_b = np.argmax(preds_b, axis=1)
+                preds_b, preds_classes_b = predict(model, img_batch)  # prediction on original image (batch)
 
                 ''' Generate CAMs for images in batch '''
                 for i, img in enumerate(img_batch):
-                    img_plotting = deprocess(img.cpu().numpy())
+                    img_np = img.cpu().numpy()
+                    img_plotting = deprocess(img_np)
                     pred = preds_b[i]
                     pred_class = preds_classes_b[i]
                     pred_class_name = label_names[pred_class]
                     idx = batch['idx'][i].item()
                     label = batch['label'][i].item()
-                    cams = []
 
                     ''' Generate CAMs for all classes (targets) '''
+                    cams = []
                     for j, t in enumerate(targets):
                         grayscale_cam = cam_method(input_tensor=img[None, ...], targets=[t])  # img 4D
                         cams.append(grayscale_cam)
@@ -491,50 +432,51 @@ if __name__ == '__main__':
                     if cam_pred.shape != wh_image:
                         cam_pred = cv2.resize(cam_pred, wh_image)
 
-                    ''' Remove explained region from image '''
-                    cam_blurred = cam_pred + cv2.blur(cam_pred, (config.blur_kernel_size, config.blur_kernel_size))
-                    cams_perturbed = [cam_blurred]
-                    scores_perturbed = [pred[pred_class]]  # [score of 100% kept (original)], skip in loop
-                    for expl_percent_kept in percentages_kept[1:]:
-                        threshold = np.percentile(cam_blurred, expl_percent_kept)
-                        cam_pred_mask = torch.Tensor(cam_blurred <= threshold).to(device)
-                        cams_perturbed.append(cam_pred_mask)
+                    ''' Perturbation baselines '''
+                    b_black = np.zeros_like(cam_pred)
+                    b_blurred = cv2.blur(img_np, (config.blur_img_s, config.blur_img_s))
+                    b_blurred_c = np.stack(
+                        [cv2.blur(img_np[c], (config.blur_img_s, config.blur_img_s)) for c in range(3)])
+                    b_mean = np.zeros_like(img_np) + np.mean(img_np, axis=(1, 2), keepdims=True)
+                    b_blurcdark = (b_black + b_blurred_c) / 2
+                    # b_blurred_hwc = b_blurred.transpose(1, 2, 0)
+                    # b_blurred_hwc_mean = b_blurred_hwc - np.mean(b_blurred_hwc, axis=(0, 1), keepdims=True)
+                    # plot_many(img_plotting, b_black, b_blurred_c, b_mean, b_blurcdark)
+                    # TODO Baseline Sobel
+                    # TODO Baseline Centered Circle
+                    # TODO Baseline
 
-                        ''' Remove explained region '''
-                        img_masked = (img * cam_pred_mask)[None, ...]
-                        img_masked_plotting = img_plotting * cam_pred_mask.cpu().numpy()
-                        # print(f'explanation kept: {expl_percent_kept} %')
-                        total_percent_kept = 100 * cam_pred_mask.sum() / cam_pred_mask.numel()
-                        # print(f'total image kept: {total_percent_kept:.2f} %')  # now should be same as expl_percent_kept
+                    ''' Perturb explained region '''
+                    cam_blurred = cam_pred + cv2.blur(cam_pred, (config.blur_cam_s, config.blur_cam_s))
+                    thresholds = np.percentile(cam_blurred, perturbed_percentages_kept)
+                    thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
+
+                    for base_name, baseline in zip(['black', 'blur', 'mean', 'blurdark'],
+                                                   [b_black, b_blurred, b_mean, b_blurcdark]):  # TODO try
+                        baseline = torch.tensor(baseline, device=device)
+                        scores_perturbed = [pred[pred_class]]  # [score of 100% kept (original)], skip in loop
+                        imgs_perturbed = []
+                        for th, pct in zip(thresholds, perturbed_percentages_kept):
+                            mask = torch.Tensor(cam_blurred < th).to(device)
+                            img_masked = (img * mask + (1 - mask) * baseline)[None, ...]
+                            # img_masked_plotting = img_plotting * mask.cpu().numpy()
+                            imgs_perturbed.append(img_masked)
 
                         ''' Predict on perturbed image '''
-                        with torch.no_grad():  # prediction on modified image (single, not batched)
-                            preds_raw_perturbed_b = model(img_masked).cpu()
-                            preds_perturbed_b = F.softmax(preds_raw_perturbed_b, dim=1).numpy()
-                            preds_classes_perturbed_b = np.argmax(preds_perturbed_b, axis=1)
-                            pred_score_perturbed = preds_perturbed_b[0, preds_classes_b][0]
-                            # not taking the top class for perturbed prediction ^^^.
+                        preds_perturbed_b, _ = predict(model, torch.cat(imgs_perturbed, dim=0))
 
                         ''' Compute Deletion Score '''
-                        deletion_score = pred_score_perturbed - pred[pred_class]
-                        # print(f'orig: {pred}\npert: {preds_perturbed_b}\nscore: {pred_score_perturbed:.4f}, drop: {deletion_score:.4f}\n')
-                        scores_perturbed.append(pred_score_perturbed)
+                        scores_perturbed = [pred[pred_class]] + list(preds_perturbed_b[:, pred_class])
 
-                        # cam2 = cam_method(input_tensor=img_masked, targets=[targets[pred_class]])
-                        output_path = join(cam_dir, f'deletion_{idx}_{method_name}_kept{expl_percent_kept}.png')
-                        plot_many(img_plotting, cam_pred, cam_pred_mask, img_masked_plotting,
-                                  title=f'{method_name}, idx: {idx}\npredicted: {pred_class_name} ({pred[pred_class]:.4f})\n'
-                                        f'{expl_percent_kept}% kept, drop: {deletion_score:.4f}',
-                                  titles=['original', 'cam', 'mask', 'masked'], output_path=output_path, show=args.show)
+                        cams = np.stack(cams)  # [C, H, W]
+                        cams = (255 * cams).astype(np.uint8)  # uint8 to save space
 
-                    cams = np.stack(cams)  # [C, H, W]
-                    cams = (255 * cams).astype(np.uint8)  # uint8 to save space
-
-                    cams_out.append({'cam': cams, 'idx': idx,
-                                     'method': method_name, 'path': batch['path'][i],  # strings are not tensors
-                                     'label': label, 'pred': preds_classes_b[i],
-                                     'del_scores': scores_perturbed, 'pred_scores': preds_b[i],
-                                     'percentages_kept': percentages_kept})
+                        cams_out.append({'cam': cams, 'idx': idx,
+                                         'method': method_name, 'path': batch['path'][i],  # strings are not tensors
+                                         'baseline': base_name,
+                                         'label': label, 'pred': preds_classes_b[i],
+                                         'del_scores': scores_perturbed, 'pred_scores': preds_b[i],
+                                         'percentages_kept': percentages_kept})
                     # end of batch
                 # end of dataset
             # end of method
@@ -549,7 +491,6 @@ if __name__ == '__main__':
             # print('Not saving CAMs!')
         # end of all methods
 
-
     ''' Embeddings '''
     if args.emb:
         """
@@ -561,10 +502,8 @@ if __name__ == '__main__':
         Both ways currently work: either extracting it as a hook or through a special forward method
         
         """
-
         # if not hasattr(model, 'fw_with_emb'):
         #     raise AttributeError('Model does not have fw_with_emb method')  # currently only for resnet18
-
         ''' Extract embeddings through forward hooks '''
         activation = {}
 
@@ -648,67 +587,31 @@ if __name__ == '__main__':
     print(f'Execution finished in {t1 - t0:.2f}s')  # since dataset loaded
 
     ''' Sandbox Area'''
-    aug = False
-    if aug:
-        # call for each image in batch separately or for the whole batch?
-        ''' Unused '''
-        """
-        # for a runnable augmentation example look into `augmentation.py`
-        
-        # set default print float precision
-        np.set_printoptions(precision=2, suppress=True)
+    if args.cam:
+        # plot deletion scores per-baseline
+        baselines = cams_df.baseline.unique()
+        xs = cams_df.percentages_kept.iloc[0]
 
-        import torchvision.transforms.functional as F
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-        # what are the sample values (min, max, avg, std) for each?
-        for i, img in enumerate([sample['image'], img_pre, img_aug, img_aug_pre]):
-            img_n = F.normalize(img, mean=mean, std=std)
-            for j, img_v in enumerate([img, img_n]):
+        fig, ax = plt.subplots(len(baselines), 1, figsize=(6, 10), sharex=True)
+        for k, base_name in enumerate(baselines):
+            ax[k].set_title(base_name)
+            cams_df_base = cams_df[cams_df.baseline == base_name]
+            del_scores = np.stack(cams_df_base.del_scores.to_numpy())
+            for i, c in enumerate(label_names):
+                idxs = cams_df_base.label == i
+                dsi = del_scores[idxs]
+                ax[k].plot(xs, dsi.mean(axis=0), label=c)
 
-                if False:
-                    v = img_v.numpy()
-                    v_min = v.min(axis=(0, 2, 3))
-                    v_max = v.max(axis=(0, 2, 3))
-                    v_mean = v.mean(axis=(0, 2, 3))
-                    v_std = v.std(axis=(0, 2, 3))
-                    print(f'[{i}, {j}]:\t'
-                          f'Min: {v_min},\t'
-                          f'Max: {v_max},\t'
-                          f'Mean: {v_mean},\t'
-                          f'Std: {v_std}')
+        plt.ylabel('Score')
+        plt.xlabel('% Pixels Kept')
+        plt.suptitle('Deletion Scores per Baseline')
+        plt.gca().invert_xaxis()  # reverse x-axis
+        # add minor y ticks
 
-        # out, feature = model.fw_with_emb(img_batch)
-        out_raw = model(sample['image'].to(device))
-        out_pre = model(img_pre.to(device))
-        out_aug = model(img_aug.to(device))
-        out_aug_pre = model(img_aug_pre.to(device))
+        # figure legend out right top
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        plt.tight_layout()
+        plt.show()
 
-        for o in [out_raw, out_pre, out_aug, out_aug_pre]:
-            loss = criterion(o, sample['label'].to(device))
-            print(f'Loss: {loss.item():.4e}')
-        """
-
-        """
-        How to do with augmentation, preprocessing, and collate_fn:
-        - preprocess not used at all
-        - collate_fn makes everything a tensor, it runs in the worker processes, I do not provide it (kept default)
-        - transform 
-            - transform=augmentation -> dataset loader -> dataset constructor, and runs in __getitem__  (I think in the worker processes)
-            - I need to provide both the augmentation functions for train and eval
-            - 
-        - augmentation can also run in training loop in main process
-        
-        how to make it work:
-        - first, don't waste time with transforms, just do it in the training loop
-        - then, make it work with transforms
-        
-        - ignore preprocess (don't run it pls)
-        - keep collate_fn as is and transforms empty
-        - add augmentation to the training loop
-        - make sure that eval uses the eval "aug"
-        
-        - first verify in eval
-            - non-augmented image processing should be equivalent
-        
-        """
+    if args.cam:
+        pass

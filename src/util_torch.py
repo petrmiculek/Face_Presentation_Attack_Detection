@@ -1,5 +1,5 @@
 """
-    :filename model_util.py (originally EarlyStopping.py)
+    :filename util_torch.py (originally EarlyStopping.py)
 
     Early Stopping adapted from: vvvvvvv
 
@@ -36,6 +36,8 @@
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 """
+import os
+from os.path import join
 
 import torch
 import numpy as np
@@ -43,6 +45,8 @@ import numpy as np
 from torchvision.models import ResNet18_Weights
 from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
+
+import config
 # local
 from src.resnet18 import resnet18
 from src.augmentation import ClassificationPresetTrain, ClassificationPresetEval
@@ -95,14 +99,14 @@ def change_silu_efficientnet(model):
     return model
 
 
-def load_model(model_name, num_classes, seed=None):
+def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
     # todo seed is not used [func]
     if model_name == 'resnet18':
         # load model with pretrained weights
         weights = ResNet18_Weights.IMAGENET1K_V1
         model = resnet18(weights=weights, weight_class=ResNet18_Weights)
         # replace last layer with n-ary classification head
-        model.fc = torch.nn.Linear(512, num_classes, bias=True)
+        model.fc = torch.nn.Linear(512, num_classes)
         transforms_orig = weights.transforms()
     elif model_name == 'efficientnet_v2_s':
         weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
@@ -118,21 +122,40 @@ def load_model(model_name, num_classes, seed=None):
     else:
         raise ValueError(f'Unknown model name {model_name}')
 
-    # disable inplace operations (explanations work with forward hooks, inplace operations break them)
-    inplace_c = 0
-    inplace_n = []
-    for module in model.modules():
-        if isinstance(module, torch.nn.ReLU) or \
-                isinstance(module, torch.nn.SiLU) or \
-                isinstance(module, torch.nn.Dropout):
-            module.inplace = False
-            inplace_c += 1
-            inplace_n.append(module.__class__.__name__)
-    # todo if broken check here [func]
+    ''' Disable in-place operations '''
+    if True:
+        # explanations work with forward hooks, inplace operations break them
+        inplace_c = 0
+        inplace_n = []
+        for module in model.modules():
+            if isinstance(module, torch.nn.ReLU) or \
+                    isinstance(module, torch.nn.SiLU) or \
+                    isinstance(module, torch.nn.Dropout):
+                module.inplace = False
+                inplace_c += 1
+                inplace_n.append(module.__class__.__name__)
+        # todo if broken check here [func]
 
-    if inplace_c > 0:
-        print(f'Disabled inplace operations for {inplace_c} modules')
+        if inplace_c > 0:
+            print(f'Disabled inplace operations for {inplace_c} modules')
 
+    if freeze_backbone:
+        layer_to_unfreeze = ''
+        if model_name == 'resnet18':
+            layer_to_unfreeze = 'fc'
+        elif model_name == 'efficientnet_v2_s':
+            layer_to_unfreeze = 'classifier'  # or features.7
+
+        print('Note: Currently not freezing any layers')
+        for name, param in model.named_parameters():
+            if layer_to_unfreeze not in name:
+                # param.requires_grad = False
+                pass
+            else:
+                param.requires_grad = True
+            # print(name, param.requires_grad)
+
+    ''' Preprocessing and Augmentations '''
     crop_size = transforms_orig.crop_size[0]
     resize_size = transforms_orig.resize_size[0]
     transform_train = ClassificationPresetTrain(auto_augment_policy='ta_wide', random_erase_prob=0.5,
@@ -144,6 +167,21 @@ def load_model(model_name, num_classes, seed=None):
         'train': transform_train,
         'eval': transform_eval,
     }
+    return model, preprocess
+
+
+def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
+    """ Load Model """
+    model_name = model_name
+    model, preprocess = load_model(model_name, num_classes)
+    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt'), map_location=device), strict=False)
+    model.to(device)
+    model.eval()
+    # sample model prediction
+    out = model(torch.rand(config.sample_shape).to(device)).shape
+    # assert shape is (1, num_classes)
+    assert out == (1, num_classes), f'Model output shape is {out}'
+
     return model, preprocess
 
 
@@ -193,3 +231,44 @@ class EarlyStopping:
             self.trace_func('Saving model ...')
 
         self.val_loss_min = val_loss
+
+
+def init_device():
+    print(f"Available GPUs: {torch.cuda.device_count()}")
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name(0)}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f'Running on device: {device}')
+    # Human-readable printing for Numpy + Torch
+    np.set_printoptions(precision=3, suppress=True)
+    torch.set_printoptions(precision=3, sci_mode=False)
+    return device
+
+
+def init_seed(seed=None):
+    if seed is None:
+        print('No random seed set')
+    else:
+        print(f'Random seed: {seed}')
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
+
+    # PyTorch reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def get_dataset_module(dataset_name):
+    """
+    Import dataset module.
+    Name-based match for the .py module, specific split is defined later.
+    Placing the code here is a workaround to avoid circular imports.
+    """
+    if dataset_name == 'rose_youtu':
+        import dataset_rose_youtu as dataset_module
+    elif dataset_name == 'siwm':
+        import dataset_siwm as dataset_module
+    else:
+        raise ValueError(f'Unknown dataset name {dataset_name}')
+    return dataset_module

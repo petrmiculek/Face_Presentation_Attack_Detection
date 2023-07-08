@@ -92,17 +92,19 @@ spoof_attack : spoof_info
 
 
 def read_annotations(f):
+    # TODO parameter `f` unused
     annotations = pd.read_csv(annotations_path)
 
     """
     There are 6 spoof_attack and 15 spoof_info classes.
+    
     """
 
     use_spoof_attack = True  # else use spoof_info
     label_key = 'spoof_attack' if use_spoof_attack else 'spoof_info'
 
     # rename columns to fit the base class (copy columns)
-    # annotations.rename(columns={'image_path': 'path', label_key: 'label'}, inplace=True)
+    # annotations.rename(columns={'image_path': 'path', 'label_key': 'label'}, inplace=True)
     annotations['path'] = annotations['image_path']
     annotations['label'] = annotations[label_key]
 
@@ -223,7 +225,7 @@ def remove_missing_bbox(annotations):
 
 
 if __name__ == '__main__':
-    annotations = read_annotations(None)
+    annotations = read_annotations()
 
     if False:
         ''' Plot images of given category '''

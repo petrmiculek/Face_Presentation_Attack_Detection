@@ -8,6 +8,8 @@ from collections import defaultdict
 from prettytable import PrettyTable
 import numpy as np
 
+import config
+
 
 # local
 # -
@@ -208,3 +210,22 @@ def get_marker(idx=None):
         idx = randint(0, len(markers))
 
     return markers[idx % len(markers)]
+
+
+def update_config(args_dict, global_vars=True, hparams=True):
+    # update config with args
+    if global_vars:
+        for k, v in vars(config).items():
+            if k in args_dict:
+                setattr(config, k, args_dict[k])
+                # print(f'Updated config.{k} = {v} -> {args_dict[k]}')
+            elif k in config.HPARAMS and not hparams:
+                # copy hparams to config
+                setattr(config, k, config.HPARAMS[k])
+
+    # update config.HPARAMS with args
+    if hparams:
+        for k, v in args_dict.items():
+            if k in config.HPARAMS:
+                config.HPARAMS[k] = v
+                # print(f'Updated config.HPARAMS.{k} = {v}')

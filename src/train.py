@@ -1,7 +1,6 @@
 # stdlib
 import argparse
 import datetime
-import json
 import logging
 import os
 from os.path import join
@@ -20,13 +19,10 @@ from torch import autocast
 from torch.cuda.amp import GradScaler
 import numpy as np
 from tqdm import tqdm
-import pandas as pd
 
 os.environ["WANDB_SILENT"] = "true"
 
 import wandb as wb
-
-from matplotlib import pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 # disable all matplotlib logging
@@ -38,9 +34,10 @@ pil_logger.setLevel(logging.INFO)
 # local
 import config
 from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, keys_append, save_dict_json, count_parameters
-from model_util import EarlyStopping, load_model
-from dataset_base import pick_dataset_version, load_dataset
+from util import get_dict, print_dict, keys_append, save_dict_json, count_parameters, update_config
+from util_torch import EarlyStopping, load_model, get_dataset_module
+from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup
+from util_torch import init_device, init_seed
 
 ''' Global variables '''
 # -
@@ -60,7 +57,6 @@ parser.add_argument('-k', '--attack', help='attack for unseen_attack and one_att
                     default=None)  # falsy default value: also ''
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
-
 # set custom help message
 parser.description = 'Train a model on a dataset'
 
@@ -70,63 +66,29 @@ if __name__ == '__main__':
     ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     args_dict = get_dict(args)
-    for k, v in vars(config).items():
-        # update config with args
-        if k in args_dict:
-            setattr(config, k, args_dict[k])
-        elif k in config.HPARAMS:
-            setattr(config, k, config.HPARAMS[k])
+    update_config(args_dict, global_vars=False, hparams=True)
 
     ''' Start W&B '''
-    wb.config = {
-        "learning_rate": args.lr,
-        "batch_size": args.batch_size,
-    }
-    # all stdout is saved after init
-    wb.init(project="facepad", config=wb.config, mode='disabled' if args.no_log else None)
+    # all stdout is saved to W&B after init
+    wb.init(project="facepad", config=config.HPARAMS, mode='disabled' if args.no_log else None)
 
     print(f'Running: {__file__}\n'
           f'In dir: {os.getcwd()}')
-    # print all arguments
-    print_dict(args_dict, 'Args')  # potentially print dict of vars(config)
-
-    ''' (Random) seed '''
-    seed = args.seed if args.seed else np.random.randint(0, 2 ** 32 - 1)
-    print(f'Random seed: {seed}')
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    torch.backends.cudnn.deterministic = True  # can this make things fail?
-    torch.backends.cudnn.benchmark = False
+    print_dict(args_dict, title='Args')
 
     ''' Dataset + Training mode '''
-    # load dataset module - name based match for the .py module, specific split is defined later
-    if args.dataset == 'rose_youtu':
-        import dataset_rose_youtu as dataset_module
-    elif args.dataset == 'siwm':
-        import dataset_siwm as dataset_module
-    else:
-        raise ValueError(f'Unknown dataset name {args.dataset}')
+    dataset_module = get_dataset_module(args.dataset)
 
     # set training mode
     training_mode = args.mode  # 'one_attack' or 'unseen_attack' or 'all_attacks'
-    label_names_binary = ['genuine', 'attack']
-    # separate_person_ids = False  # unused: train on one person, test on another
-    if training_mode == 'all_attacks':
-        label_names = dataset_module.label_names_unified
-        num_classes = len(dataset_module.labels_unified)
-    elif training_mode == 'one_attack':
-        label_names = label_names_binary
-        num_classes = 2
-    elif training_mode == 'unseen_attack':
-        label_names = label_names_binary
-        num_classes = 2
+    label_names, label_names_binary, num_classes = get_dataset_setup(dataset_module, training_mode)
 
-    else:
-        raise ValueError(f'Unknown training mode: {training_mode}')
-
-        ''' Initialization '''
+    ''' Initialization '''
     if True:
+        ''' (Random) seed '''
+        seed = args.seed if args.seed else np.random.randint(0, 2 ** 32 - 1)
+        init_seed(seed)
+
         # training config and logging
         training_run_id = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         config.training_run_id = training_run_id
@@ -154,40 +116,14 @@ if __name__ == '__main__':
         print('Not running in Pycharm, not displaying plots')
 
     ''' Device Info '''
-    if True:
-        # check available gpus
-        print(f"Available GPUs: {torch.cuda.device_count()}")
-        print(f"Current device: {torch.cuda.current_device()}")
-        print(f"Device name: {torch.cuda.get_device_name(0)}")
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        # device = torch.device("cpu")
-        print(f'Running on device: {device}')
-        # torch.backends.cudnn.benchmark = True  # makes training non-deterministic?
-
-        # Logging Setup
-        logging.basicConfig(level=logging.WARNING)
+    device = init_device()
+    # Logging Setup
+    logging.basicConfig(level=logging.WARNING)
 
     ''' Model '''
     if True:
         model_name = args.arch
-        model, preprocess = load_model(model_name, num_classes)
-
-        # freeze all previous layers
-        layer_to_unfreeze = ''
-        if model_name == 'resnet18':
-            layer_to_unfreeze = 'fc'
-        elif model_name == 'efficientnet_v2_s':
-            layer_to_unfreeze = 'classifier'  # or features.7
-
-        print('Note: Currently not freezing any layers')
-        for name, param in model.named_parameters():
-            if layer_to_unfreeze not in name:
-                # param.requires_grad = False
-                pass
-            else:
-                param.requires_grad = True
-            # print(name, param.requires_grad)
-
+        model, preprocess = load_model(model_name, num_classes, seed=seed, freeze_backbone=False)
         model.to(device)
 
         ''' Model Setup '''
@@ -206,21 +142,9 @@ if __name__ == '__main__':
     if True:
         dataset_meta = pick_dataset_version(args.dataset, args.mode, attack=args.attack)
 
-
-        def parse_str_list(x):
-            return list(map(int, x[1:-1].split(',')))
-
-
-        def parse_str(x):
-            try:
-                return int(x)
-            except ValueError:
-                return parse_str_list(x)
-
-
-        attack_train = parse_str(dataset_meta['attack_train'])
-        attack_val = parse_str(dataset_meta['attack_val'])
-        attack_test = parse_str(dataset_meta['attack_test'])
+        attack_train = dataset_meta['attack_train']
+        attack_val = dataset_meta['attack_val']
+        attack_test = dataset_meta['attack_test']
         limit = args.limit if args.limit else -1  # -1 for no limit
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
                          'pin_memory': True, 'seed': seed,
@@ -233,8 +157,12 @@ if __name__ == '__main__':
         len_train_loader, len_val_loader, len_test_loader = len(train_loader), len(val_loader), len(test_loader)
 
     ''' Logging '''
+    # remove seed, otherwise wb.config.update errors out when overwriting with None
+    args_dict.pop('seed')
+    # updating with program args (overwrites config)
     wb.config.update(
-        {"run_name": run_name,
+        {**args_dict,
+         "run_name": run_name,
          "optimizer": str(optimizer),
          "dataset_size": len_train_ds,
          "class_train": attack_train,
@@ -244,20 +172,13 @@ if __name__ == '__main__':
          "val_id": dataset_meta['val_id'],
          "test_id": dataset_meta['test_id'],
          "model_name": model_name,
-         "training_mode": training_mode,
          "num_classes": num_classes,
          "seed": seed,
-         })
-
-    config_dump = get_dict(config)
-    wb.config.update(config_dump)
-
-    # remove seed, otherwise wb.config.update errors out when overwriting with None
-    args_dict.pop('seed')
-    # updating with program args (overwrites config)
-    wb.config.update(args_dict)
+         # "training_mode
+         })  # , allow_val_change=True)
 
     # Print setup
+    config_dump = config.HPARAMS  # get_dict(config)
     print('Printing config, values may have been overwritten by program args')
     print_dict(config_dump, title='Config:')
     count_parameters(model, sum_only=True)
@@ -281,7 +202,7 @@ if __name__ == '__main__':
             with tqdm(train_loader, mininterval=1., desc=f'ep{epoch} train') as progress_bar:
                 for i, sample in enumerate(progress_bar, start=1):
                     img, label = sample['image'], sample['label']
-                    img = img.to(device, non_blocking=True)  # should transfer to gpu happen in autocast?
+                    img = img.to(device, non_blocking=True)
                     label = label.to(device, non_blocking=True)
 
                     with autocast(device_type='cuda', dtype=torch.float16):
@@ -351,8 +272,7 @@ if __name__ == '__main__':
         res_epoch = {'Loss Training': ep_train_loss,
                      'Loss Validation': ep_loss_val,
                      'Accuracy Training': metrics_train['Accuracy'],
-                     'Accuracy Validation': metrics_val['Accuracy'],
-                     }
+                     'Accuracy Validation': metrics_val['Accuracy']}
 
         # print results
         print_dict(res_epoch)
@@ -362,7 +282,6 @@ if __name__ == '__main__':
             best_accu_val = metrics_val['Accuracy']
             # save a deepcopy of res to best_res
             best_res = deepcopy(res_epoch)
-            best_res['epoch_best'] = epoch
 
         wb.log(res_epoch, step=epoch)
 
@@ -424,7 +343,10 @@ if __name__ == '__main__':
 
     wb.run.summary['loss_test'] = loss_test
     wb.run.summary['accu_test'] = metrics_test["Accuracy"]
+    wb.run.summary['Epoch Best'] = early_stopping.best_epoch
+
     metrics_test = keys_append(metrics_test, ' Test')
+    metrics_test['epochs_trained'] = epochs_trained
     wb.log(metrics_test, step=epochs_trained)
 
     ''' Plot results '''
@@ -433,13 +355,13 @@ if __name__ == '__main__':
 
     ''' Confusion matrix '''
     if args.mode == 'one_attack':
-        attack_train_name = dataset_module.label_names_unified[attack_train]
-        attack_test_name = dataset_module.label_names_unified[attack_test]
+        attack_train_name = attack_train  # dataset_module.label_names_unified[attack_train]
+        attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
                        f'\ntrain: {attack_train_name}({attack_train}), ' \
                        f'test:{attack_test_name}({attack_test})'
     elif args.mode == 'unseen_attack':
-        attack_test_name = dataset_module.label_names_unified[attack_test]
+        attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
                        f'\ntrain: all but test, ' \
                        f'test:{attack_test_name}({attack_test})'

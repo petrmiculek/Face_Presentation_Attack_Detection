@@ -43,7 +43,7 @@ pil_logger.setLevel(logging.INFO)
 # import dataset_rose_youtu as dataset
 from metrics import compute_metrics, confusion_matrix  # , accuracy
 from util import print_dict, save_i, keys_append
-from model_util import load_model
+from util_torch import load_model
 import config
 
 run_dir = ''
@@ -199,7 +199,7 @@ if __name__ == '__main__':
 
                 for method in methods:  # tqdm(..., desc='CAM methods', mininterval=1, leave=False):
 
-                    # todo methods could be loaded outside the loop
+                    # todo methods could be loaded outside the loop [clean]
                     method_name = method.__name__
                     grad_cam = method(model=model, target_layers=target_layers, use_cuda=True)
 

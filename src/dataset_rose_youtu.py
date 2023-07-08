@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 logging.getLogger('matplotlib.font_manager').disabled = True
 
@@ -121,10 +122,14 @@ data_root_dir = join(os.pardir, 'data', 'client')  # todo dataset rose_youtu pro
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')
-adaptation_txt = 'adaptation_list.txt'
-test_txt = 'test_list.txt'
-annotations_train_path = join(data_root_dir, adaptation_txt)
-annotations_test_path = join(data_root_dir, test_txt)
+annotations_train_path = join(data_root_dir, 'adaptation_list.txt')
+annotations_test_path = join(data_root_dir, 'test_list.txt')
+"""
+^ dataset-split used in Zhi Li, et al., 2022, 
+“One-Class Knowledge Distillation for Face Presentation Attack Detection”.
+
+In my work, the dataset is separated differently and is used for regular training/validation/testing.
+"""
 
 
 def _read_annotations(path, samples_dir):
@@ -146,7 +151,7 @@ def _read_annotations(path, samples_dir):
     contents_list = [x.strip().split(' ') for x in contents_list]
     samples = []
     count_failed = 0
-    for s in contents_list:
+    for s in tqdm(contents_list):
         try:
             path = join(samples_dir, s[0] + '.jpg')
 
@@ -174,35 +179,20 @@ def _read_annotations(path, samples_dir):
     return samples
 
 
-def read_annotations(which='genuine', use_as_label=None):
+def read_annotations(use_as_label=None):
     """
     Read annotations for the Rose Youtu dataset
-    :param which: dataset part: 'genuine', or 'attack'
     :param use_as_label: copy a column to the label column, convenience thing
     :return: annotations dataframe
     """
+    annotations_genuine = _read_annotations(annotations_train_path, samples_train_dir)
+    annotations_attack = _read_annotations(annotations_test_path, samples_test_dir)
+    annotations = pd.concat([annotations_genuine, annotations_attack])
+    if use_as_label:
+        annotations['label'] = annotations_genuine[use_as_label]
 
-    if which == 'both':
-        annotations_genuine = _read_annotations(annotations_train_path, samples_train_dir)
-        annotations_attack = _read_annotations(annotations_test_path, samples_test_dir)
+    return annotations
 
-        if use_as_label:
-            annotations_genuine['label'] = annotations_genuine[use_as_label]
-            annotations_attack['label'] = annotations_attack[use_as_label]
-
-        return annotations_genuine, annotations_attack
-    else:
-        if which == 'genuine':
-            annotations = _read_annotations(annotations_train_path, samples_train_dir)
-        elif which == 'attack':
-            annotations = _read_annotations(annotations_test_path, samples_test_dir)
-        else:
-            raise ValueError(f"Invalid annotations requested: {which}")
-
-        if use_as_label:
-            annotations['label'] = annotations[use_as_label]
-
-        return annotations
 
 
 def info_from_filename(filename):
@@ -246,21 +236,19 @@ def Loader(annotations, **kwargs):
 # def main():
 if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
-    paths_genuine = read_annotations('genuine', 'label_unif')
-    genuine_ds = Dataset(paths_genuine)
+    paths = read_annotations(use_as_label='label_unif')
+    dataset = Dataset(paths)
 
     # show first image
-    sample = genuine_ds[0]
+    sample = dataset[0]
     img, label = sample['image'], sample['label']
     plt.imshow(img)
-    plt.title(f'Training image no. 0, label: {label}')
+    plt.title(f'Image no. 0, label: {label}')
     plt.show()
 
     ''' Get Dataset Loaders '''
-    genuine_loader = Loader(paths_genuine, batch_size=4)
-    paths_attacks = read_annotations('attack', 'label_unif')
-    attack_loader = Loader(paths_attacks, batch_size=4)
+    loader = Loader(paths, batch_size=4)
 
-    sample = next(iter(genuine_loader))
+    sample = next(iter(loader))
     imgs, ys = sample['image'], sample['label']
     print(imgs.shape, ys.shape)

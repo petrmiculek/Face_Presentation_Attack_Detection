@@ -2,7 +2,8 @@
 # qsub -I -l select=1:ncpus=4:mem=32gb:ngpus=1:scratch_shm=true -q gpu -l walltime=1:30:00
 
 # copy files to scratch dir (memory-mapped)
-cp -r s_brno2/data.tar "$SCRATCHDIR"
+cd s_brno2 || echo "ERROR: cd failed"
+cp -r data.tar "$SCRATCHDIR"
 tar -xf "$SCRATCHDIR"/data.tar --directory "$SCRATCHDIR"/
 # cp -r config config_backup
 # path normalls starts with $FIND
@@ -36,12 +37,18 @@ done
 #	echo "perl -pe 's|\Q$FIND\E|$SCRATCHDIR|g' $file">
 #done
 
-# singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:23.02-py3.SIF
+#singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:23.05-py3.SIF
+# problem: torchvision efficientnet_v2_s: unexpected keyword argument 'weight_class'
+#singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:23.02-py3.SIF
 singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
 #pip install lime
-pip install opencv-python-headless
 pip install grad-cam seaborn
-pip show grad-cam | grep "Location: "  # don't forget to edit pytorch_grad_cam/utils/image.py:L166 (don't resize)
+pip uninstall opencv-python
+pip install opencv-python-headless
+# show, grep, cut second word
+gradcam_path="$(pip show grad-cam | grep "Location: " | cut -d " " -f 2)/pytorch_grad_cam/base_cam.py"
+
+  # don't forget to edit pytorch_grad_cam/utils/image.py:L166 (don't resize)
 
 #/auto/vestec1-elixir/home/petrmiculek/.local/lib/python3.8/site-packages/pytorch_grad_cam/utils/image.py
 # or maybe better yet, edit:
@@ -49,7 +56,7 @@ pip show grad-cam | grep "Location: "  # don't forget to edit pytorch_grad_cam/u
 # scaled = cam  # <orig_line>
 
 # LIME generation
-CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime --limit 4 -w 1
+#CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime --limit 4 -w 1
 
 # CAMs generation
 
@@ -57,7 +64,11 @@ CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime 
 CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 0 -t 4 -b 1 --cam
 
 # full run
-CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 4 -b 8 --cam
+CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 2 -b 8 --cam
+
+
+#export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+#scripts/train.sh
 
 
 # example output:

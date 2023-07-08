@@ -143,6 +143,10 @@ def pick_dataset_version(name, mode, attack=None):
         raise ValueError(f'No dataset with name {name} and mode {mode}. '
                          f'Available datasets:\n{available}')
 
+    if attack is not None and mode == 'all_attacks':
+        print(f'Ignoring attack number, training mode is: {mode}')
+        attack = None
+
     available = datasets[['dataset_name', 'training_mode', 'attack_test']].values
     # filter by attack
     if attack is not None:
@@ -152,7 +156,7 @@ def pick_dataset_version(name, mode, attack=None):
                              f'Available datasets:\n{available}')
 
     elif len(datasets) > 1:
-        available = datasets[['dataset_name', 'training_mode']].values
+        available = datasets[['dataset_name', 'training_mode', 'attack_test']].values
         raise ValueError(f'Multiple datasets with name {name} and mode {mode}. '
                          f'Available datasets:\n{available}')
 
@@ -222,6 +226,7 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
         print('Dataset labels per split:')  # including labels not present
         # it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
         for split, split_paths in paths.items():
+            # TODO call show_labels_distribution [clean]
             class_occurences = []
             value_counts = split_paths['label'].value_counts().sort_index()
             for i in range(num_classes):
@@ -239,3 +244,38 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
     loader_test = dataset_module.Loader(paths['test'], seed=seed, transform=transform_eval, **loader_kwargs)
 
     return loader_train, loader_val, loader_test
+
+
+def show_labels_distribution(labels, split, num_classes):
+    """
+    Print labels distribution for a split.
+
+    :param labels: Pandas Series with labels
+    :param split: String with split name
+    :param num_classes: Number of classes
+    """
+    value_counts = labels.value_counts().sort_index()
+    class_occurences = []
+    for i in range(num_classes):
+        if i in value_counts.index:
+            class_occurences.append(value_counts[i])
+        else:
+            class_occurences.append(0)
+    print(f'{split}:', class_occurences)
+
+
+def get_dataset_setup(dataset_module, training_mode):
+    """Get dataset setup (label names, number of classes) for a given training mode."""
+    label_names_binary = ['genuine', 'attack']
+    if training_mode == 'all_attacks':
+        label_names = dataset_module.label_names_unified
+        num_classes = len(dataset_module.labels_unified)
+    elif training_mode == 'one_attack':
+        label_names = label_names_binary
+        num_classes = 2
+    elif training_mode == 'unseen_attack':
+        label_names = label_names_binary
+        num_classes = 2
+    else:
+        raise ValueError(f'Unknown training mode: {training_mode}')
+    return label_names, label_names_binary, num_classes

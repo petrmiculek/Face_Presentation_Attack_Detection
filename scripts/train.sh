@@ -14,7 +14,7 @@ else
     py=/opt/conda/bin/python3  # 3.8.X on singularity 22.10
 #    py=/usr/bin/python  # 3.8.10 on singularity 23.02
     batch_size=16
-    num_workers=16
+    num_workers=4
     epochs=10
     seed=$RANDOM
 fi
@@ -31,3 +31,8 @@ $py src/train.py -a efficientnet_v2_s -l 0.0001 -b $batch_size -e $epochs -w $nu
 # glados, RTX 2080, 8GB -> 16; leaked 5GB during the work :/, glados cannot run singularity23.02
 # adan, 16GB
 # in speed benchmark for empty training loop, batch size 64 is used - not realistic for training
+exit 0
+# meta
+python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b 16 -e 3 -w 4 -s $RANDOM -m unseen_attack -k 1
+# local
+python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b 4 -e 3 -w 1 -s $RANDOM -m all_attacks -k 1 -t

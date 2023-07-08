@@ -29,16 +29,12 @@ logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=loggin
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', help='dataset in {rose_youtu, siwm}', type=str, required=True)
-# following (3) arguments are for one_attack mode only
-parser.add_argument('-k', '--attack_test', help='attack type to test on (1..7), random by default', type=int,
+# following (3) argument are for one_attack and unseen_attack modes
+parser.add_argument('-k', '--attack_test', help='attack type to test on (1..4), random by default', type=int,
                     default=-1)
-# parser.add_argument('-v', '--attack_val', help='attack type to validate on (1..7), random by default', type=int,
-#                     default=-1)
-# parser.add_argument('-r', '--attack_train', help='attack type to train on (1..7), random by default', type=int,
-#                     default=-1)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
-parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')  # TODO not implemented
+parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')  # TODO not implemented [func]
 
 ''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
 '''
@@ -49,7 +45,7 @@ Every person has the same number of samples, but not the same number of attack t
 Tested on:
                 |  rose_youtu  |    siwm    |
 all_attacks     | training OK  |    .       |
-unseen_attack   |       .      |    .       |
+unseen_attack   | training OK  |    .       |
 one_attack      |       .      |    .       |
 
 # generation failed for one_attack on metacentrum
@@ -75,7 +71,7 @@ if __name__ == '__main__':
     else:
         raise ValueError('dataset must be in {rose_youtu, siwm}')
 
-    bona_fide = 0  # todo does not apply for siwm, also read this from dataset
+    bona_fide = 0  # todo does not apply for siwm, also read this from dataset [func] [warn]
 
     if training_mode == 'all_attacks':
         label_names = dataset.label_names_unified
@@ -90,10 +86,9 @@ if __name__ == '__main__':
         raise ValueError(f'Unknown training mode: {training_mode}')
 
         ''' Read annotations (paths to samples + labels) '''
-    paths_genuine, paths_attacks = dataset.read_annotations('both')
-    paths_all = pd.concat([paths_genuine, paths_attacks])
+    paths = dataset.read_annotations()
 
-    person_ids = pd.unique(paths_all['id0'])
+    person_ids = pd.unique(paths['id0'])
 
     ''' Split dataset according to training mode '''
     label_nums = dataset.label_nums_unified
@@ -102,15 +97,15 @@ if __name__ == '__main__':
     if training_mode == 'all_attacks':
         ''' Train on all attacks, test on all attacks '''
 
-        paths_all['label'] = paths_all['label_unif']  # 0..4
+        paths['label'] = paths['label_unif']  # 0..4
         # split subsets based on person ids
         val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
         train_ids = np.setdiff1d(person_ids, [val_id, test_id])
 
         # split train/val/test (based on person IDs)
-        paths_train = paths_all[paths_all['id0'].isin(train_ids)]
-        paths_val = paths_all[paths_all['id0'].isin([val_id])]
-        paths_test = paths_all[paths_all['id0'].isin([test_id])]
+        paths_train = paths[paths['id0'].isin(train_ids)]
+        paths_val = paths[paths['id0'].isin([val_id])]
+        paths_test = paths[paths['id0'].isin([test_id])]
 
         class_train = class_val = class_test = 'all'
 
@@ -118,7 +113,7 @@ if __name__ == '__main__':
         ''' Train and test on one attack type '''
         # validation 1 person, test 1 unseen person, train the rest
 
-        paths_all['label'] = paths_all['label_bin']  # 0,1
+        paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
         if args.attack_test == -1:
@@ -134,19 +129,19 @@ if __name__ == '__main__':
         train_ids = np.setdiff1d(person_ids, [val_id, test_id])
 
         # split train/val/test (based on attack type and person IDs)
-        paths_train = paths_all[paths_all['label_unif'].isin([bona_fide, class_train])
-                                & paths_all['id0'].isin(train_ids)]
-        paths_val = paths_all[paths_all['label_unif'].isin([bona_fide, class_val])
-                              & paths_all['id0'].isin([val_id])]
-        paths_test = paths_all[paths_all['label_unif'].isin([bona_fide, class_test])
-                               & paths_all['id0'].isin([test_id])]
+        paths_train = paths[paths['label_unif'].isin([bona_fide, class_train])
+                            & paths['id0'].isin(train_ids)]
+        paths_val = paths[paths['label_unif'].isin([bona_fide, class_val])
+                          & paths['id0'].isin([val_id])]
+        paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
+                           & paths['id0'].isin([test_id])]
 
     elif training_mode == 'unseen_attack':
         ''' Train on all attacks except one, test on the unseen attack '''
         # IDs not separated -- OK
 
         # note: test set == validation set
-        paths_all['label'] = paths_all['label_bin']  # 0,1
+        paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
         if args.attack_test == -1:
@@ -161,11 +156,12 @@ if __name__ == '__main__':
         train_ids = val_id = test_id = person_ids
 
         # split train/val/test (based on attack type and person IDs)
-        paths_train = paths_all[paths_all['label_unif'].isin(
-            [bona_fide, *class_train])  # todo: check in comparison to one_attack: *class_train, whereas there is no *
+        paths_train = paths[paths['label_unif'].isin(
+            [bona_fide, *class_train])
+            # todo: check in comparison to one_attack: *class_train, whereas there is no * [func]
             # & paths_all['id0'].isin(train_ids)
         ]
-        paths_test = paths_all[paths_all['label_unif'].isin([bona_fide, class_test])
+        paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
             # & (paths_all['id0'] == test_id)
         ]
         paths_val = paths_test  # note: validation == test
@@ -175,13 +171,13 @@ if __name__ == '__main__':
     ''' Safety check '''
     unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
     if not unique_classes == num_classes:
+        # will scream for RoseYoutu (no `other` class), but that's OK
         logging.warning(f'Number of unique classes in dataset does not match number of classes in model\n' +
                         f'real: {unique_classes}, expected: {num_classes}\n')
-        # TODO will scream for RoseYoutu (no `other` class)
 
     assert bona_fide not in [class_test, class_val, *class_train], \
         'bona_fide label used as an attack label'
-    # TODO check for string x int comparisons
+    # TODO check for string x int comparisons [warn]
 
     training_mode_long = training_mode
     if training_mode in ['unseen_attack', 'one_attack']:
@@ -231,8 +227,8 @@ if __name__ == '__main__':
         paths_test = paths_test[:limit]
 
         logging.info('Dataset labels per split:')
-        for paths in [paths_train, paths_val, paths_test]:
-            logging.info(paths['label'].value_counts())
+        for p in [paths_train, paths_val, paths_test]:
+            logging.info(p['label'].value_counts())
 
     save_path_metadata = join(dataset_lists_dir, f'dataset_{dataset.name}_metadata_{training_mode_long}.json')
 
@@ -284,8 +280,8 @@ if __name__ == '__main__':
         # print summary of dataset
 
     print('Dataset examples:')  # first 2 samples
-    for name, paths in zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test]):
-        print(name, '\n', paths.head(2))
+    for name, p in zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test]):
+        print(name, '\n', p.head(2))
 
     print('Metadata:\n', metadata)
 

@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from pytorch_grad_cam.utils.image import show_cam_on_image
+from torch import Tensor as torch_tensor
 
 
 def overlay_cam(img, cam):
@@ -28,3 +29,16 @@ def overlay_cam(img, cam):
     overlayed = show_cam_on_image(img_np, cam_np_resized, use_rgb=True, image_weight=0.3,
                                   colormap=cv2.COLORMAP_VIRIDIS)
     return overlayed
+
+
+def deprocess(img):
+    if isinstance(img, torch_tensor):
+        img = img.detach().cpu().numpy()  # might fail when no grad?
+        img = img.transpose(1, 2, 0)
+    img -= np.mean(img)
+    img = img / (np.std(img) + 1e-5)
+    img *= 0.1
+    img += 0.5
+    img = np.clip(img, 0, 1)
+    # don't make image uint8
+    return img

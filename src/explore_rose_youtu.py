@@ -74,9 +74,7 @@ def plot_example_images(paths_all):
 def main():
     """No docstring"""
     ''' Load data annotations '''
-    paths_genuine = read_annotations('genuine')
-    paths_attacks = read_annotations('attack')
-    paths_all = pd.concat([paths_genuine, paths_attacks])
+    paths_all = read_annotations()
 
     ''' Plots styling '''
     sns.set_style('whitegrid')
@@ -113,8 +111,8 @@ def main():
 
     if False:
         ''' Plot attack category distribution (paths_all) '''
-        paths_all[
-            'label_num'].value_counts().plot.bar()  # changed 'label_num' to 'label_unif' on Mar 21'].value_counts().plot.bar()
+        paths_all['label_num'].value_counts().plot.bar()
+        # changed 'label_num' to 'label_unif' on Mar 21 - apply the change here too
         plt.title('Attack Category distribution')
         plt.xlabel('Attack Category')
         plt.ylabel('Count')
@@ -124,7 +122,7 @@ def main():
 
     if False:
         ''' Plot categories per person ID, per dataset subset '''
-        for subset in [paths_genuine]:  # '[paths_train, paths_val, paths_test, paths_all]:
+        for subset in [paths_all]:  # '[paths_train, paths_val, paths_test, paths_all]:
             # get variable name as string
             subset_name = [k for k, v in locals().items() if v is subset][0]
 
