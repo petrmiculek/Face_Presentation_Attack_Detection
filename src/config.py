@@ -14,7 +14,7 @@ HPARAMS = {
 
 seed_eval_default = 42
 
-sample_shape = (1, 3, 224, 224)  # TODO hardcoded input size
+sample_shape = (1, 3, 224, 224)  # TODO hardcoded input size [clean]
 
 # -----------------------
 # Explanations Evaluation
