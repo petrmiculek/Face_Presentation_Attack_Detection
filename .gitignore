@@ -14,4 +14,4 @@ config*
 .mypy_cache
 notebooks
 *.lock
-
+scripts/download_dataset_rose_youtu.sh

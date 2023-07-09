@@ -34,7 +34,7 @@ parser.add_argument('-k', '--attack_test', help='attack type to test on (1..4), 
                     default=-1)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
-parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')  # TODO not implemented [func]
+parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
 
 ''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
 '''

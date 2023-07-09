@@ -151,6 +151,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
     """
     import torch
     from matplotlib import pyplot as plt
+    from PIL.Image import Image
 
     if len(imgs) == 1 and isinstance(imgs[0], (list, tuple)):
         # unwrap imgs object if necessary (should be passed as plot_many(*imgs),
@@ -183,6 +184,9 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
 
         if isinstance(img, torch.Tensor):
             img = np.array(img.cpu())
+
+        if isinstance(img, Image):
+            img = np.array(img)
         if img.ndim == 4:
             img = img[0, ...]
         if img.shape[0] in [1, 3]:

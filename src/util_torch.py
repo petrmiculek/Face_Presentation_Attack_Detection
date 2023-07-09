@@ -134,7 +134,7 @@ def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
                 module.inplace = False
                 inplace_c += 1
                 inplace_n.append(module.__class__.__name__)
-        # todo if broken check here [func]
+        # todo in-place: if broken check here [func]
 
         if inplace_c > 0:
             print(f'Disabled inplace operations for {inplace_c} modules')

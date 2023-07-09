@@ -4,7 +4,7 @@ cams.pkl.gz:
     idx
     pred
     label
-    TODO make format complete
+    TODO make format complete [clean]
 
 I need:
 model dir (runs/name), but not the model itself
