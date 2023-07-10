@@ -203,6 +203,7 @@ video_lengths = [492, 402, 427, 348, 350, 351, 347, 357, 381, 347, 366, 501, 401
 parser = argparse.ArgumentParser()
 parser.add_argument('-i', '--input_path', type=str, default='/mnt/sdb1/dp/rose_youtu_vids')
 parser.add_argument('-o', '--output_path', type=str, default='/mnt/sdb1/dp/rose_youtu_crops')
+parser.add_argument('-f', '--frames', type=int, help='number of frames to extract per video', default=100)
 
 ''' Global Variables '''
 dot_ext = '.jpg'
@@ -212,8 +213,9 @@ data = None
 output_path = None
 
 
-def process_batch(batch, filename_base, idxs, vid_filename):
+def process_batch(batch, filename_base, idxs, frame_dims, vid_filename):
     global mtcnn, dot_ext, batch_size, data, output_path
+    something_saved = False
     try:
         # batch-predict
         boxes, probs, landmarks = mtcnn.detect(batch, landmarks=True)
@@ -221,9 +223,10 @@ def process_batch(batch, filename_base, idxs, vid_filename):
         valid_idxs = np.array([i for i, b in enumerate(boxes) if b is not None])
         # ^^^ forget about np.where, mtcnn.detect returns [None] when len(batch) == 1 and None when >= 2
         if len(valid_idxs) == 0:
-            return  # no valid boxes
+            return something_saved  # no valid boxes
         boxes, probs, landmarks, idxs = boxes[valid_idxs], probs[valid_idxs], landmarks[valid_idxs], idxs[valid_idxs]
         batch = [batch[i] for i in valid_idxs]
+        frame_dims = [frame_dims[i] for i in valid_idxs]
 
         # choose best crop
         if not mtcnn.keep_all:
@@ -248,9 +251,13 @@ def process_batch(batch, filename_base, idxs, vid_filename):
             face_npy = crops[i].permute(1, 2, 0).numpy()
             cv2.imwrite(path_crop, cv2.cvtColor(face_npy, cv2.COLOR_RGB2BGR))  # alternative saving
             data.append({'source': vid_filename, 'path': path_crop,
-                         'box': boxes[i], 'landmarks': landmarks[i], })  # TODO add 'dim': [w, h] of original image
+                         'box': boxes[i], 'landmarks': landmarks[i], 'dim_orig': frame_dims[i]})
+            something_saved = True
+
     except Exception as e:
         print(e)
+    finally:
+        return something_saved
 
 
 # def main():
@@ -258,67 +265,76 @@ if __name__ == '__main__':
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
-
-    ''' Face Detector - MTCNN'''
-    device = init_device()
-    mtcnn = MTCNN(image_size=384, margin=140,
-                  select_largest=False, device=device,
-                  post_process=False,  # TODO check effect
-                  # keep_all=True,  # TODO check effect
-                  )
+    # args.frames = 1  # TODO Debug
     ''' Setup '''
     input_path, output_path = args.input_path, args.output_path
     path_metadata = join(output_path, 'data.pkl')
     matching_pattern = '*.mp4'
     cwd_prev = os.getcwd()
     os.chdir(input_path)
-    for p in [output_path]:  # output_path_prefix_zip
-        if not os.path.exists(p):
-            os.makedirs(p)
-            print(f'Created dir: {p}')
+    os.makedirs(output_path, exist_ok=False)
+    print(f'Created dir: {output_path}')
     start = 0
     filenames = glob(matching_pattern)[start:]
+    print(f'Found {len(filenames)} files matching "{matching_pattern}"')
+
+    ''' Face Detector - MTCNN'''
+    device = init_device()
+    mtcnn = MTCNN(image_size=384, margin=140,
+                  select_largest=False, device=device,
+                  post_process=False,
+                  )
+
     # vid_filename = filenames[0]
     data = []
     err_counter = 0
+    no_samples_vids = []
     ''' Processing videos '''
     pbar = tqdm(enumerate(filenames, start=start), total=len(filenames))
     for i_vid, vid_filename in pbar:
         try:
             filename_base = vid_filename[: -len(".mp4")]
             v_cap = cv2.VideoCapture(vid_filename)
-            # v_len = int(v_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            # v_len = int(v_cap.get(cv2.CAP_PROP_FRAME_COUNT))  # does not work on metacentrum
             v_len = video_lengths[i_vid]
             batch = []
             idxs = []
+            frame_dims = []
             ''' Write to zip (in memory) '''
-            # byte_io = io.BytesIO()
-            # zip_io = zipfile.ZipFile(byte_io, "w")
-            # with io.BytesIO() as byte_io, zipfile.ZipFile(byte_io, "w") as zip_io:
-            filter_rate = v_len // 100  # regularly sample around 100 frames.
+            filter_rate = v_len // args.frames  # regularly sample around 100 frames.
             # ^^^ More because of rounding, less because of non-face frames,1 +1 last frame.
             filter_rate = max(1, filter_rate)  # avoid zero-div
+            no_samples_saved = True
             for i_frame in range(100000):
                 # Load frame
                 success, frame = v_cap.read()
                 last = i_frame == v_len - 1
                 skipped = i_frame % filter_rate != 0
 
-                if success and (not skipped or last):
-                    # Accumulate batch
+                # Process frame
+                if success and not skipped:
                     frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # Accumulate batch
                     batch.append(Image.fromarray(frame))
                     idxs.append(i_frame)
+                    frame_dims.append(frame.shape[:2])
 
                 # Batch Predict
-                if len(batch) > 0 and (len(batch) >= batch_size or not success or last):
-                    # ^ non-empty, and: full batch, or last frame of video ^
-                    process_batch(batch, filename_base, np.array(idxs), vid_filename)
+                if (len(batch) >= batch_size or not success or last) and len(batch) > 0:
+                    # ^ full batch, or last frame of video ^
+                    no_samples_saved &= process_batch(batch, filename_base, np.array(idxs), frame_dims, vid_filename)
                     batch = []
                     idxs = []
+                    frame_dims = []
                     pbar.set_description(desc=f'frame({i_frame}/{v_len})')
+
+                if last or not success:
+                    break
                 # end of video
+                if no_samples_saved:
+                    no_samples_vids.append(vid_filename)
+
         except Exception as e:
             if err_counter < 10:
                 print(e)
@@ -328,15 +344,10 @@ if __name__ == '__main__':
     print(f'Error count: {err_counter}')
 
     df = pd.DataFrame(data)
-
-    # save df as pickle
-    if os.path.exists(path_metadata):
-        # append to existing df
-        df_old = pd.read_pickle(path_metadata)
-        df = pd.concat([df_old, df], ignore_index=True)
-
     df.to_pickle(path_metadata)
     print(f'Saved df to {path_metadata}')
+
+    print(f'No sample vids: {no_samples_vids}')
 
     # Visualize
     if False:
