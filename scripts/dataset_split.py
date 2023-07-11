@@ -108,7 +108,8 @@ if __name__ == '__main__':
         # train_ids = np.setdiff1d(person_ids, [val_ids, test_ids])
 
         # IDs 1, 8, 19 are missing in the provided dataset
-        train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])  # TODO manual indexes
+        # TODO manual indexes for now [clean]
+        train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
         val_ids = np.array([12])
         test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
 
@@ -232,9 +233,9 @@ if __name__ == '__main__':
             note += f'LIMIT={limit}_'
             logging.warning(f'Limiting dataset (each split) to {limit} samples')
 
-        paths_train = paths_train[:limit]
-        paths_val = paths_val[:limit]
-        paths_test = paths_test[:limit]
+            paths_train = paths_train[:limit]
+            paths_val = paths_val[:limit]
+            paths_test = paths_test[:limit]
 
         logging.info('Dataset labels per split:')
         for p in [paths_train, paths_val, paths_test]:

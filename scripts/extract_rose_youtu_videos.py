@@ -201,25 +201,42 @@ video_lengths = [492, 402, 427, 348, 350, 351, 347, 357, 381, 347, 366, 501, 401
                  320, 297, 321, 386, 408, 395, 276, 270, 240, 270, 286, 270, 309, 370]
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-i', '--input_path', type=str, default='/mnt/sdb1/dp/rose_youtu_vids')
-parser.add_argument('-o', '--output_path', type=str, default='/mnt/sdb1/dp/rose_youtu_crops')
-parser.add_argument('-f', '--frames', type=int, help='number of frames to extract per video', default=100)
+parser.add_argument('-i', '--input_path', type=str)  # e.g. '/mnt/sdb1/dp/rose_youtu_vids'
+parser.add_argument('-o', '--output_path', type=str)  # e.g. '/mnt/sdb1/dp/rose_youtu_imgs'
+parser.add_argument('-f', '--frames', type=int, help='number of frames to extract per video')  # e.g. 100
+parser.add_argument('-b', '--batch_size', type=int, help='batch size -- overshoot factor')  # e.g. 128
 
 ''' Global Variables '''
 dot_ext = '.jpg'
-batch_size = 128
+batch_size = 0
 mtcnn = None
 data = None
 output_path = None
+fpv = 0  # frames per video
+undershoot_counter = 0
 
 
 def process_batch(batch, filename_base, idxs, frame_dims, vid_filename):
-    global mtcnn, dot_ext, batch_size, data, output_path
+    """ Process a batch of images, saving them to disk.
+
+    :param batch: batch of images
+    :param filename_base: base filename to use for saving
+    :param idxs: indices of images in batch
+    :param frame_dims: dimensions of frames in batch
+    :param vid_filename: filename of video from which batch was extracted
+    :return: number of images saved
+    box format: [x0, y0, x1, y1]
+    landmark format: [x0, y0, x1, y1, x2, y2, x3, y3, x4, y4] =
+                    [left_eye, right_eye, nose, left_mouth, right_mouth]
+    """
+    global mtcnn, dot_ext, batch_size, data, output_path, fpv
+    global undershoot_counter
     n_saved = 0
     try:
-        # batch-predict
+        ''' Batch-predict '''
         boxes, probs, landmarks = mtcnn.detect(batch, landmarks=True)
-        # filter out None boxes
+
+        ''' Filter out None boxes, apply same indices to all arrays '''
         valid_idxs = np.array([i for i, b in enumerate(boxes) if b is not None])
         # ^^^ forget about np.where, mtcnn.detect returns [None] when len(batch) == 1 and None when >= 2
         if len(valid_idxs) == 0:
@@ -228,31 +245,29 @@ def process_batch(batch, filename_base, idxs, frame_dims, vid_filename):
         batch = [batch[i] for i in valid_idxs]
         frame_dims = [frame_dims[i] for i in valid_idxs]
 
-        # choose best crop
+        ''' Keep best bounding box per frame '''
         if not mtcnn.keep_all:
             boxes, probs, landmarks = mtcnn.select_boxes(boxes, probs, landmarks,
                                                          batch, method=mtcnn.selection_method)
         crops = mtcnn.extract(batch, boxes, save_path=None)
-        # box format: [x0, y0, x1, y1]
-        # landmark format: [x0, y0, x1, y1, x2, y2, x3, y3, x4, y4] = [left_eye, right_eye, nose, left_mouth, right_mouth]
-        not_found = [(b is None) for b in boxes]
-        if np.any(not_found):
-            print(f'Warning: {np.sum(not_found)} boxes are None')
-        boxes = [None if b is None else b.astype(float).round(0).astype(int)[0] for b in boxes]
-        landmarks = [None if l is None else l.astype(float).round(0).astype(int)[0] for l in landmarks]
-        # Per-image saving
-        for i, i_retro in enumerate(valid_idxs):
-            if boxes[i] is None:
-                print(f'Warning: box is None for {i_retro}')
-                continue
-            crop_filename = f"{filename_base}_crop_{i_retro}{dot_ext}"
+
+        # cast to int
+        boxes = [b.astype(float).round(0).astype(int)[0] for b in boxes]
+        landmarks = [l.astype(float).round(0).astype(int)[0] for l in landmarks]
+
+        undershoot_counter += min(0, fpv - len(valid_idxs))  # count how many frames we're missing
+        valid_idxs = valid_idxs[:fpv]  # only keep the first fpv frames
+
+        ''' Per-image saving of cropped faces, and metadata '''
+        for i_within_batch, i_frame_in_video in enumerate(valid_idxs):
+            crop_filename = f"{filename_base}_crop_{i_frame_in_video}{dot_ext}"
             path_crop = join(output_path, crop_filename)
-            face_npy = crops[i].permute(1, 2, 0).numpy()
+            face_npy = crops[i_within_batch].permute(1, 2, 0).numpy()
             # save cropped face
             cv2.imwrite(path_crop, cv2.cvtColor(face_npy, cv2.COLOR_RGB2BGR))
             # save metadata
-            data.append({'source': vid_filename, 'path': crop_filename,
-                         'box': boxes[i], 'landmarks': landmarks[i], 'dim_orig': frame_dims[i]})
+            data.append({'source': vid_filename, 'path': crop_filename, 'box': boxes[i_within_batch],
+                         'landmarks': landmarks[i_within_batch], 'dim_orig': frame_dims[i_within_batch]})
             n_saved += 1
 
     except Exception as e:
@@ -266,7 +281,8 @@ if __name__ == '__main__':
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
-    # args.frames = 1  # TODO Debug
+    fpv = args.frames
+    batch_size = args.batch_size  # process higher #frames, some will be discarded
     ''' Setup '''
     input_path, output_path = args.input_path, args.output_path
     path_metadata = join(output_path, 'data.pkl')
@@ -307,7 +323,7 @@ if __name__ == '__main__':
             filter_rate = v_len // args.frames  # regularly sample around 100 frames.
             # ^^^ More because of rounding, less because of non-face frames
             filter_rate = max(1, filter_rate)  # avoid zero-div
-            for i_frame in range(10000):
+            for i_frame in range(1000):  # max video length = 826
                 # Load frame
                 success, frame = v_cap.read()
                 last = i_frame == v_len - 1
@@ -355,7 +371,7 @@ if __name__ == '__main__':
     print(f'No sample vids: {no_samples_vids}')
 
     # print df rows with non-unique path
-    df_dup = df[df.duplicated(subset=['path'], keep=False)]
+    # df_dup = df[df.duplicated(subset=['path'], keep=False)]
 
     # Visualize
     if False:

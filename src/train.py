@@ -50,7 +50,7 @@ parser.add_argument('-a', '--arch', help='model architecture', type=str, default
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
 parser.add_argument('-e', '--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
 parser.add_argument('-l', '--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
-parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
+parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=-1)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
@@ -147,7 +147,7 @@ if __name__ == '__main__':
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
-        limit = args.limit if args.limit else -1  # -1 for no limit
+        limit = args.limit if (args.limit != -1) else -1  # -1 for no limit
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
                          'pin_memory': True, 'seed': seed,
                          'transform_train': preprocess['train'], 'transform_eval': preprocess['eval']}

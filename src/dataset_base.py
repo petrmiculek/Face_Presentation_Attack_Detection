@@ -1,5 +1,5 @@
 # stdlib
-from os.path import join, exists
+from os.path import join, exists, basename
 
 # external
 from PIL import Image
@@ -162,6 +162,10 @@ def pick_dataset_version(name, mode, attack=None):
 
 def load_annotations(metadata_row, seed, path_prefix=None, limit=-1, shuffle=False, quiet=True):
     """ Load annotations from the dataset list metadata file. """
+
+    def add_prefix(x):
+        return join(path_prefix, basename(x))
+
     # load annotations
     paths_train = pd.read_csv(metadata_row['path_train'])
     paths_val = pd.read_csv(metadata_row['path_val'])
@@ -170,11 +174,15 @@ def load_annotations(metadata_row, seed, path_prefix=None, limit=-1, shuffle=Fal
     paths_train['idx'] = paths_train.index
     paths_val['idx'] = paths_val.index
     paths_test['idx'] = paths_test.index
-    # add path prefix
-    add_prefix = lambda x: join(path_prefix, x)
+
+    if not quiet:
+        print(f'Adding prefix {path_prefix} to paths.')
+        print(f'before: {paths_train["path"].iloc[0]}')
     paths_train['path'] = paths_train['path'].apply(add_prefix)
     paths_val['path'] = paths_val['path'].apply(add_prefix)
     paths_test['path'] = paths_test['path'].apply(add_prefix)
+    if not quiet:
+        print(f'after: {paths_train["path"].iloc[0]}')
 
     # shuffle initial order
     if limit != -1 or shuffle:
