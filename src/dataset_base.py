@@ -16,17 +16,23 @@ import numpy as np
 # -
 
 class BaseDataset(Dataset):
-    path_key = 'path_key'  # todo unused [clean]
-
-    def __init__(self, annotations, transform=None):
+    def __init__(self, annotations, path_prefix=None, transform=None):
         self.transform = transform
         self.samples = annotations
+
+        # add path prefix (run-time)
+        # if path_prefix is not None:
+        #     self.samples['path'] = self.samples['path'].apply(lambda x: join(path_prefix, x))
 
         # test first file exists
         sample = self.samples.iloc[0]
         path = sample['path']
         if not exists(path):
             raise FileNotFoundError(f'Sample dataset file does not exist: {path} ')
+
+        paths_existing = self.samples['path'].apply(lambda x: exists(x))
+        self.samples = self.samples[paths_existing]
+        print(f'kept {len(self.samples)} samples out of {len(paths_existing)}')
 
     def __len__(self):
         return len(self.samples)
@@ -49,20 +55,13 @@ class BaseDataset(Dataset):
 
 def StandardLoader(dataset_class, annotations, **kwargs):
     """
-    Returns a dataloader for the Rose Youtu dataset
-    :param dataset_class: Dataset class to use
+    Create a training-ready dataloader for dataset.
+
+    :param dataset_class: Dataset class to use (e.g. dataset_rose_youtu.Dataset)
     :param annotations: DataFrame with list of files
     :param kwargs: keyword arguments for DataLoader
     :return: dataloader
-
-    possibly add:
-    - fraction to limit dataset size
-    - random seed + fixed  #DONE#
-    - ddp
-    - drop_last  #DONE#
-    -
     """
-
     shuffle = kwargs.pop('shuffle', False)
     batch_size = kwargs.pop('batch_size', 1)
     num_workers = kwargs.pop('num_workers', 1)
@@ -82,6 +81,7 @@ def StandardLoader(dataset_class, annotations, **kwargs):
             worker_seed = seed + worker_id
             np.random.seed(worker_seed)
             random.seed(worker_seed)
+            # is torch seed set automatically? TODO check
 
     kwargs_dataset = {
         'num_workers': num_workers,
@@ -101,11 +101,8 @@ def StandardLoader(dataset_class, annotations, **kwargs):
     kwargs_dataset.update(kwargs)
 
     if transform is None:
-        transform = Compose([
-            # Resize((224, 224)),
+        transform = Compose([  # TODO delete unused code [clean]
             ToTensor(),  # transforms.PILToTensor(),
-            # ConvertImageDtype(torch.float),
-            # Normalize(mean=[0.485, 0.456, 0.406],
         ])
 
     dataset = dataset_class(annotations, transform=transform)
@@ -163,7 +160,8 @@ def pick_dataset_version(name, mode, attack=None):
     return datasets.iloc[0]
 
 
-def load_annotations(metadata_row, seed, limit=-1, shuffle=False, quiet=True):
+def load_annotations(metadata_row, seed, path_prefix=None, limit=-1, shuffle=False, quiet=True):
+    """ Load annotations from the dataset list metadata file. """
     # load annotations
     paths_train = pd.read_csv(metadata_row['path_train'])
     paths_val = pd.read_csv(metadata_row['path_val'])
@@ -172,6 +170,12 @@ def load_annotations(metadata_row, seed, limit=-1, shuffle=False, quiet=True):
     paths_train['idx'] = paths_train.index
     paths_val['idx'] = paths_val.index
     paths_test['idx'] = paths_test.index
+    # add path prefix
+    add_prefix = lambda x: join(path_prefix, x)
+    paths_train['path'] = paths_train['path'].apply(add_prefix)
+    paths_val['path'] = paths_val['path'].apply(add_prefix)
+    paths_test['path'] = paths_test['path'].apply(add_prefix)
+
     # shuffle initial order
     if limit != -1 or shuffle:
         # shuffle when limiting dataset size to keep classes balanced
@@ -189,7 +193,7 @@ def load_annotations(metadata_row, seed, limit=-1, shuffle=False, quiet=True):
     return {'train': paths_train, 'val': paths_val, 'test': paths_test}
 
 
-def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_kwargs):
+def load_dataset(metadata_row, dataset_module, path_prefix=None, limit=-1, quiet=False, **loader_kwargs):
     """
     Load dataset from metadata.
 
@@ -218,7 +222,7 @@ def load_dataset(metadata_row, dataset_module, limit=-1, quiet=False, **loader_k
         transform_eval = loader_kwargs.pop('transform_eval', None)
 
     shuffle = loader_kwargs.pop('shuffle', False)
-    paths = load_annotations(metadata_row, seed, limit, shuffle, quiet)
+    paths = load_annotations(metadata_row, seed, path_prefix, limit, shuffle, quiet)
 
     ''' print label distributions '''
     if not quiet:

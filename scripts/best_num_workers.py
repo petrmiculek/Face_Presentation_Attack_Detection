@@ -20,8 +20,9 @@ dataset_meta = pick_dataset_version('rose_youtu', 'all_attacks')
 for num_workers in range(2, mp.cpu_count() + 1, 2):
     loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
                      'pin_memory': True, 'seed': 1}
-    train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
-                                                         quiet=True, **loader_kwargs)
+    path_prefix = ...  # TODO set path_prefix
+    train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, path_prefix=path_prefix,
+                                                         limit=limit, quiet=True, **loader_kwargs)
     start = perf_counter()
     try:
         for epoch in range(1, 3):

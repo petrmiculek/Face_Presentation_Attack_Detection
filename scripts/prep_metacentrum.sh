@@ -14,10 +14,14 @@ if [ -z "$SCRATCHDIR" ]; then
   export REPLACE='/dev/shm/'
 else
   echo "# Running on cluster"
+  # read header, count number of commas before path column
+  header_idx_path="$(head -n 1 dataset_lists/dataset_rose_youtu_test_all_attacks.csv | tr ',' '\n' | grep -n 'path' | cut -d ':' -f 1)"
   #  export FIND='..'  # if dataset never overwritten
   first_lines="$(head dataset_lists/dataset_*.csv -n 3 | tail -n 1)"
-  FIND="${first_lines%%client*}"
-  export REPLACE="$SCRATCHDIR/data/"
+
+  export FIND="${first_lines%%rose_youtu_crops4*}"  # TODO temporary
+  export REPLACE="$SCRATCHDIR/rose_youtu_full/"
+#  export REPLACE="/storage/brno2/home/petrmiculek/rose_youtu_full/"
 fi
 
 echo "# FIND=$FIND"
@@ -59,23 +63,29 @@ gradcam_path="$(pip show grad-cam | grep "Location: " | cut -d " " -f 2)/pytorch
 #CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/colorful-breeze-45 --lime --limit 4 -w 1
 
 # CAMs generation
+# shellcheck disable=SC2157
+if [ -z "wont-run" ]; then
 
-# sample run
-CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 0 -t 4 -b 1 --cam
+  # sample run
+  CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 0 -t 4 -b 1 --cam
 
-# full run
-CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 2 -b 8 --cam
+  # full run
+  CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 2 -b 8 --cam
+
+  #export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+  #scripts/train.sh
 
 
-#export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-#scripts/train.sh
+  # example output:
+  # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_test_all_attacks.csv >dataset_lists/test
+  # mv dataset_lists/test dataset_lists/dataset_rose_youtu_test_all_attacks.csv
+  # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_train_all_attacks.csv >dataset_lists/train
+  # mv dataset_lists/train dataset_lists/dataset_rose_youtu_train_all_attacks.csv
+  # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_val_all_attacks.csv >dataset_lists/val
+  # mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
+  #/mnt/storage-brno2/home/petrmiculek/RoseYoutu-full
 
-
-# example output:
-# perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_test_all_attacks.csv >dataset_lists/test
-# mv dataset_lists/test dataset_lists/dataset_rose_youtu_test_all_attacks.csv
-# perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_train_all_attacks.csv >dataset_lists/train
-# mv dataset_lists/train dataset_lists/dataset_rose_youtu_train_all_attacks.csv
-# perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_val_all_attacks.csv >dataset_lists/val
-# mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
-
+  cp rose_videos.tar $SCRATCHDIR
+  tar -xf $SCRATCHDIR/rose_videos.tar --directory $SCRATCHDIR/vids --checkpoint=.1000
+  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs && cd $SCRATCHDIR && tar cf ryi5.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi5.tar /storage/brno2/home/petrmiculek/facepad/
+fi

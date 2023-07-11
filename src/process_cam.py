@@ -66,6 +66,7 @@ parser.add_argument('-z', '--show', help='show outputs', action='store_true')
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='do not save anything', action='store_true')
+parser.add_argument('-p', '--path_prefix', help='path to dataset', type=str, default=None)
 
 
 def read_cams(path):
@@ -267,7 +268,8 @@ if __name__ == '__main__':
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
         split = 'test'
-        dataset_paths = load_annotations(dataset_meta, seed, limit)[split]
+        path_samples = args.path_prefix
+        dataset_paths = load_annotations(dataset_meta, seed, path_samples, limit)[split]
         ds = dataset_module.Dataset(dataset_paths)
         bona_fide = dataset_module.bona_fide
         label_names = dataset_module.label_names_unified

@@ -71,7 +71,7 @@ parser.add_argument('-c', '--cam', help='generate CAM outputs', action='store_tr
 parser.add_argument('-v', '--eval', help='run evaluation loop', action='store_true')
 parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
 parser.add_argument('-z', '--show', help='show outputs', action='store_true')
-
+parser.add_argument('-p', '--path', help='path to dataset', type=str, default=None)
 
 def predict(model, inputs):
     """ Predict on batch, return Numpy preds and classes. """
@@ -214,7 +214,8 @@ if __name__ == '__main__':
                          'transform_train': preprocess['eval'], 'transform_eval': preprocess['eval']}
         #                                               ^^^^ note: eval transform is used for both train and test
         train_loader, val_loader, test_loader = \
-            load_dataset(dataset_meta, dataset_module, limit=limit, quiet=False, **loader_kwargs)
+            load_dataset(dataset_meta, dataset_module, path_prefix=args.path,
+                         limit=limit, quiet=False, **loader_kwargs)
 
         bona_fide = dataset_module.bona_fide
         label_names = dataset_module.label_names_unified

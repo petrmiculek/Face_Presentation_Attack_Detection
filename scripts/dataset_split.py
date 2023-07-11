@@ -29,6 +29,7 @@ logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=loggin
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', help='dataset in {rose_youtu, siwm}', type=str, required=True)
+parser.add_argument('-p', '--path', help='path to dataset top-level directory', type=str, required=True)
 # following (3) argument are for one_attack and unseen_attack modes
 parser.add_argument('-k', '--attack_test', help='attack type to test on (1..4), random by default', type=int,
                     default=-1)
@@ -43,10 +44,10 @@ Split into 8 for training, 1 for validation, 1 for testing
 Every person has the same number of samples, but not the same number of attack types
 
 Tested on:
-                |  rose_youtu  |    siwm    |
-all_attacks     | training OK  |    .       |
-unseen_attack   | training OK  |    .       |
-one_attack      |       .      |    .       |
+                |  rose_youtu  |    siwm    |   rose_youtu_full
+all_attacks     | training OK  |    .       |   .
+unseen_attack   | training OK  |    .       |   .
+one_attack      |       .      |    .       |   .
 
 # generation failed for one_attack on metacentrum
 '''
@@ -59,6 +60,8 @@ if __name__ == '__main__':
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     seed = args.seed if args.seed else 42
     np.random.seed(seed)
+    if args.no_log:
+        print('Not saving anything, dry run')
 
     note = ''  # arbitrary extra info: dataset length limit, ...
 
@@ -85,10 +88,12 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
 
-        ''' Read annotations (paths to samples + labels) '''
-    paths = dataset.read_annotations()
+    ''' Read annotations (paths to samples + labels) '''
+    paths = dataset.preprocess_annotations(args.path)
 
-    person_ids = pd.unique(paths['id0'])
+    id_key = 'id2'
+    paths[id_key] = paths[id_key].astype(int)
+    person_ids = pd.unique(paths[id_key])
 
     ''' Split dataset according to training mode '''
     label_nums = dataset.label_nums_unified
@@ -96,16 +101,21 @@ if __name__ == '__main__':
 
     if training_mode == 'all_attacks':
         ''' Train on all attacks, test on all attacks '''
-
+        # note: train_ids, val_ids, test_ids -- everything as a list
         paths['label'] = paths['label_unif']  # 0..4
         # split subsets based on person ids
-        val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
-        train_ids = np.setdiff1d(person_ids, [val_id, test_id])
+        # val_ids, test_id = np.random.choice(person_ids, size=2, replace=False)
+        # train_ids = np.setdiff1d(person_ids, [val_ids, test_ids])
+
+        # IDs 1, 8, 19 are missing in the provided dataset
+        train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])  # TODO manual indexes
+        val_ids = np.array([12])
+        test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
 
         # split train/val/test (based on person IDs)
-        paths_train = paths[paths['id0'].isin(train_ids)]
-        paths_val = paths[paths['id0'].isin([val_id])]
-        paths_test = paths[paths['id0'].isin([test_id])]
+        paths_train = paths[paths[id_key].isin(train_ids)]
+        paths_val = paths[paths[id_key].isin(val_ids)]
+        paths_test = paths[paths[id_key].isin(test_ids)]
 
         class_train = class_val = class_test = 'all'
 
@@ -125,16 +135,16 @@ if __name__ == '__main__':
             class_test = class_val = class_train = args.attack_test
 
         # person-splitting
-        val_id, test_id = np.random.choice(person_ids, size=2, replace=False)
-        train_ids = np.setdiff1d(person_ids, [val_id, test_id])
+        val_ids, test_ids = np.random.choice(person_ids, size=2, replace=False)
+        train_ids = np.setdiff1d(person_ids, [val_ids, test_ids])
 
         # split train/val/test (based on attack type and person IDs)
         paths_train = paths[paths['label_unif'].isin([bona_fide, class_train])
-                            & paths['id0'].isin(train_ids)]
+                            & paths[id_key].isin(train_ids)]
         paths_val = paths[paths['label_unif'].isin([bona_fide, class_val])
-                          & paths['id0'].isin([val_id])]
+                          & paths[id_key].isin([val_ids])]
         paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
-                           & paths['id0'].isin([test_id])]
+                           & paths[id_key].isin([test_ids])]
 
     elif training_mode == 'unseen_attack':
         ''' Train on all attacks except one, test on the unseen attack '''
@@ -153,16 +163,16 @@ if __name__ == '__main__':
         class_train = np.setdiff1d(attack_nums, [class_test])
 
         # person-splitting
-        train_ids = val_id = test_id = person_ids
+        train_ids = val_ids = test_ids = person_ids
 
         # split train/val/test (based on attack type and person IDs)
         paths_train = paths[paths['label_unif'].isin(
             [bona_fide, *class_train])
             # todo: check in comparison to one_attack: *class_train, whereas there is no * [func]
-            # & paths_all['id0'].isin(train_ids)
+            # & paths_all[id_key].isin(train_ids)
         ]
         paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
-            # & (paths_all['id0'] == test_id)
+            # & (paths_all[id_key].isin(test_ids))
         ]
         paths_val = paths_test  # note: validation == test
     else:
@@ -186,7 +196,7 @@ if __name__ == '__main__':
     if True:
         ''' Set up directories and filenames '''
         dataset_lists_dir = 'dataset_lists'
-        if not os.path.isdir(dataset_lists_dir):
+        if not os.path.isdir(dataset_lists_dir) and not args.no_log:
             logging.info(f'Creating dir: {dataset_lists_dir}')
             os.makedirs(dataset_lists_dir)
 
@@ -245,8 +255,8 @@ if __name__ == '__main__':
         'attack_val': class_val,
         # person IDs
         'train_ids': train_ids,
-        'val_id': val_id,
-        'test_id': test_id,
+        'val_ids': val_ids,
+        'test_ids': test_ids,
         # split lengths
         'len_train': len(paths_train),
         'len_val': len(paths_val),

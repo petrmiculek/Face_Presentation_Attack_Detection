@@ -44,6 +44,7 @@ from util_torch import init_device, init_seed
 ''' Parsing Arguments '''
 # local
 parser = argparse.ArgumentParser()
+parser.add_argument('-p', '--path', help='path to dataset', type=str, default=None)
 parser.add_argument('-d', '--dataset', help='dataset to train on', type=str, default='rose_youtu')
 parser.add_argument('-a', '--arch', help='model architecture', type=str, default='resnet18')  # efficientnet_v2_s
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
@@ -128,6 +129,7 @@ if __name__ == '__main__':
 
         ''' Model Setup '''
         criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
+        # BCEWithLogitsLoss
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999))
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
                                                                factor=config.HPARAMS['lr_scheduler_factor'],
@@ -149,8 +151,8 @@ if __name__ == '__main__':
         loader_kwargs = {'shuffle': True, 'batch_size': args.batch_size, 'num_workers': args.num_workers,
                          'pin_memory': True, 'seed': seed,
                          'transform_train': preprocess['train'], 'transform_eval': preprocess['eval']}
-        train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, limit=limit,
-                                                             quiet=False, **loader_kwargs)
+        train_loader, val_loader, test_loader = load_dataset(dataset_meta, dataset_module, path_prefix=args.path,
+                                                             limit=limit, quiet=False, **loader_kwargs)
         bona_fide = dataset_module.bona_fide_unified
         len_train_ds, len_val_ds, len_test_ds = len(train_loader.dataset), len(val_loader.dataset), len(
             test_loader.dataset)
@@ -169,12 +171,10 @@ if __name__ == '__main__':
          "class_val": attack_val,
          "class_test": attack_test,
          "train_ids": dataset_meta['train_ids'],
-         "val_id": dataset_meta['val_id'],
-         "test_id": dataset_meta['test_id'],
-         "model_name": model_name,
+         "val_ids": dataset_meta['val_ids'],
+         "test_ids": dataset_meta['test_ids'],
          "num_classes": num_classes,
          "seed": seed,
-         # "training_mode
          })  # , allow_val_change=True)
 
     # Print setup

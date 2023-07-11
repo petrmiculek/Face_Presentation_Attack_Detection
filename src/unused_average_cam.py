@@ -43,7 +43,7 @@ pil_logger.setLevel(logging.INFO)
 # import dataset_rose_youtu as dataset
 from metrics import compute_metrics, confusion_matrix  # , accuracy
 from util import print_dict, save_i, keys_append
-from util_torch import load_model
+from util_torch import load_model_eval
 import config
 
 run_dir = ''
@@ -64,6 +64,7 @@ transform_eval = None
 ''' Global variables '''
 # -
 
+parser = argparse.ArgumentParser(description='...')
 
 if __name__ == '__main__':
     """
@@ -137,8 +138,10 @@ if __name__ == '__main__':
                          'seed': seed, 'drop_last': False,
                          'transform_train': preprocess['eval'], 'transform_eval': preprocess['eval']}
         #                                               ^^^^ note: eval transform is used for both train and test
+        path_prefix = ...  # TODO set path_prefix
         train_loader, val_loader, test_loader = \
-            load_dataset(dataset_meta, dataset_module, limit=limit, quiet=False, **loader_kwargs)
+            load_dataset(dataset_meta, dataset_module, path_prefix=path_prefix, limit=limit, quiet=False,
+                         **loader_kwargs)
 
         bona_fide = dataset_module.bona_fide
         label_names = dataset_module.label_names_unified
@@ -172,7 +175,7 @@ if __name__ == '__main__':
 
         ''' Iterate over batches in dataset '''
         for batch in tqdm(test_loader, mininterval=2., desc='CAM'):
-            img_batch, label = batch['image'], batch['label']
+            # img_batch, label = batch['image'], batch['label']
             img_batch, label_batch = batch['image'], batch['label']
             path_batch = batch['path']
             with torch.no_grad():

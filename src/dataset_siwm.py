@@ -225,7 +225,7 @@ def remove_missing_bbox(annotations):
 
 
 if __name__ == '__main__':
-    annotations = read_annotations()
+    annotations = read_annotations('TODO path here')
 
     if False:
         ''' Plot images of given category '''
@@ -246,9 +246,9 @@ if __name__ == '__main__':
         loader_siwm = SIWMLoader(annotations, batch_size=4, shuffle=True)
 
         # compare SIW-M to RoseYoutu
-        from dataset_rose_youtu import Loader, read_annotations as read_annotations_rose_youtu
+        from dataset_rose_youtu import Loader, preprocess_annotations
 
-        annotations_rose = read_annotations_rose_youtu('attack')
+        annotations_rose = preprocess_annotations('TODO makes no sense')
         annotations_rose['label'] = annotations_rose['label_bin']
         loader_rose = Loader(annotations_rose, batch_size=4, shuffle=True)
 

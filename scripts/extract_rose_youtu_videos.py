@@ -215,7 +215,7 @@ output_path = None
 
 def process_batch(batch, filename_base, idxs, frame_dims, vid_filename):
     global mtcnn, dot_ext, batch_size, data, output_path
-    something_saved = False
+    n_saved = 0
     try:
         # batch-predict
         boxes, probs, landmarks = mtcnn.detect(batch, landmarks=True)
@@ -223,7 +223,7 @@ def process_batch(batch, filename_base, idxs, frame_dims, vid_filename):
         valid_idxs = np.array([i for i, b in enumerate(boxes) if b is not None])
         # ^^^ forget about np.where, mtcnn.detect returns [None] when len(batch) == 1 and None when >= 2
         if len(valid_idxs) == 0:
-            return something_saved  # no valid boxes
+            return n_saved  # no valid boxes
         boxes, probs, landmarks, idxs = boxes[valid_idxs], probs[valid_idxs], landmarks[valid_idxs], idxs[valid_idxs]
         batch = [batch[i] for i in valid_idxs]
         frame_dims = [frame_dims[i] for i in valid_idxs]
@@ -245,19 +245,20 @@ def process_batch(batch, filename_base, idxs, frame_dims, vid_filename):
             if boxes[i] is None:
                 print(f'Warning: box is None for {i_retro}')
                 continue
-            # save cropped face
             crop_filename = f"{filename_base}_crop_{i_retro}{dot_ext}"
             path_crop = join(output_path, crop_filename)
             face_npy = crops[i].permute(1, 2, 0).numpy()
-            cv2.imwrite(path_crop, cv2.cvtColor(face_npy, cv2.COLOR_RGB2BGR))  # alternative saving
-            data.append({'source': vid_filename, 'path': path_crop,
+            # save cropped face
+            cv2.imwrite(path_crop, cv2.cvtColor(face_npy, cv2.COLOR_RGB2BGR))
+            # save metadata
+            data.append({'source': vid_filename, 'path': crop_filename,
                          'box': boxes[i], 'landmarks': landmarks[i], 'dim_orig': frame_dims[i]})
-            something_saved = True
+            n_saved += 1
 
     except Exception as e:
         print(e)
     finally:
-        return something_saved
+        return n_saved
 
 
 # def main():
@@ -289,9 +290,11 @@ if __name__ == '__main__':
     data = []
     err_counter = 0
     no_samples_vids = []
+    total_samples = 0
     ''' Processing videos '''
     pbar = tqdm(enumerate(filenames, start=start), total=len(filenames))
     for i_vid, vid_filename in pbar:
+        samples_saved = 0
         try:
             filename_base = vid_filename[: -len(".mp4")]
             v_cap = cv2.VideoCapture(vid_filename)
@@ -302,10 +305,9 @@ if __name__ == '__main__':
             frame_dims = []
             ''' Write to zip (in memory) '''
             filter_rate = v_len // args.frames  # regularly sample around 100 frames.
-            # ^^^ More because of rounding, less because of non-face frames,1 +1 last frame.
+            # ^^^ More because of rounding, less because of non-face frames
             filter_rate = max(1, filter_rate)  # avoid zero-div
-            no_samples_saved = True
-            for i_frame in range(100000):
+            for i_frame in range(10000):
                 # Load frame
                 success, frame = v_cap.read()
                 last = i_frame == v_len - 1
@@ -323,22 +325,25 @@ if __name__ == '__main__':
                 # Batch Predict
                 if (len(batch) >= batch_size or not success or last) and len(batch) > 0:
                     # ^ full batch, or last frame of video ^
-                    no_samples_saved &= process_batch(batch, filename_base, np.array(idxs), frame_dims, vid_filename)
+                    samples_saved = process_batch(batch, filename_base, np.array(idxs), frame_dims, vid_filename)
+                    total_samples += samples_saved
                     batch = []
                     idxs = []
                     frame_dims = []
-                    pbar.set_description(desc=f'frame({i_frame}/{v_len})')
+                    pbar.set_description(desc=f'vid {i_vid}/{len(filenames)}, '
+                                              f'frame {i_frame}/{v_len}, '
+                                              f'saved {total_samples} (+{samples_saved})')
 
                 if last or not success:
                     break
-                # end of video
-                if no_samples_saved:
-                    no_samples_vids.append(vid_filename)
-
+            # end of video
         except Exception as e:
             if err_counter < 10:
                 print(e)
             err_counter += 1
+        finally:
+            if samples_saved == 0:
+                no_samples_vids.append(vid_filename)
 
     # end of all videos
     print(f'Error count: {err_counter}')
@@ -348,6 +353,9 @@ if __name__ == '__main__':
     print(f'Saved df to {path_metadata}')
 
     print(f'No sample vids: {no_samples_vids}')
+
+    # print df rows with non-unique path
+    df_dup = df[df.duplicated(subset=['path'], keep=False)]
 
     # Visualize
     if False:

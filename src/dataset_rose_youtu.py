@@ -1,3 +1,13 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+# TODO Describe this file
+"""
+Dataset Rose-Youtu
+
+"""
+
 # stdlib
 import logging
 import os
@@ -122,7 +132,7 @@ data_root_dir = join(os.pardir, 'data', 'client')  # todo dataset rose_youtu pro
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')
-annotations_train_path = join(data_root_dir, 'adaptation_list.txt')
+annotations_adaptation_path = join(data_root_dir, 'adaptation_list.txt')
 annotations_test_path = join(data_root_dir, 'test_list.txt')
 """
 ^ dataset-split used in Zhi Li, et al., 2022, 
@@ -132,9 +142,9 @@ In my work, the dataset is separated differently and is used for regular trainin
 """
 
 
-def _read_annotations(path, samples_dir):
+def _preprocess_annotations_old(path, samples_dir):
     """
-    Read annotations for the Rose Youtu dataset
+    Read annotations for the Rose Youtu dataset - internal.
     internal function, use read_annotations instead
 
     :param path: annotations file path
@@ -153,6 +163,7 @@ def _read_annotations(path, samples_dir):
     count_failed = 0
     for s in tqdm(contents_list):
         try:
+            # sample row: 1/real/2_G_NT_5s_g_E_2_1/0 1 0
             path = join(samples_dir, s[0] + '.jpg')
 
             # skip non-existing samples
@@ -179,25 +190,64 @@ def _read_annotations(path, samples_dir):
     return samples
 
 
-def read_annotations(use_as_label=None):
+def preprocess_annotations(path_dataset_root, use_as_label=None):
+    """ Preprocess annotations file for the Rose Youtu dataset.
+
+    paths for samples are just filenames, the path prefix gets added upon loading the dataset.
+    :param path_dataset_root: path to the top-level directory of the dataset
+    :return: annotations dataframe
     """
-    Read annotations for the Rose Youtu dataset
+    df = pd.read_pickle(join(path_dataset_root, 'data.pkl'))
+    metadata = []
+    for i, r in tqdm(df.iterrows(), total=len(df)):
+        p = r['path']  # absolute path
+        pname = os.path.basename(p)
+        pcode = pname.split('_crop')[0]
+        prefix_artificial = pcode.split('_')[-1]
+        pcode = f'{prefix_artificial}_{pcode}'
+        metadata_sample = info_from_filename(pcode)
+
+        label_text = metadata_sample['label_text']
+        label_orig = label_to_nums_orig[label_text]
+        label_unif = labels_to_unified_num[label_text]
+        label_bin = int(label_unif != bona_fide_unified)  # 0 if bona-fide, 1 otherwise
+        metadata.append({**metadata_sample,
+                         **r.to_dict(),
+                         'path': pname,
+                         'label_orig': label_orig, 'label_unif': label_unif,
+                         'label_bin': label_bin,
+                         })
+        # previous version uses `id0` from a provided annotation (_list.txt).
+        # id0 does not exist for the new version.
+        # id1 is bogus in the new version.
+
+    metadata = pd.DataFrame(metadata)
+    if use_as_label:
+        metadata['label'] = metadata[use_as_label]
+
+    return metadata
+
+
+def preprocess_annotations_old(use_as_label=None):
+    """
+    Read annotations for the Rose Youtu dataset.
     :param use_as_label: copy a column to the label column, convenience thing
     :return: annotations dataframe
     """
-    annotations_genuine = _read_annotations(annotations_train_path, samples_train_dir)
-    annotations_attack = _read_annotations(annotations_test_path, samples_test_dir)
-    annotations = pd.concat([annotations_genuine, annotations_attack])
+
+    annotations_adaptation = _preprocess_annotations_old(annotations_adaptation_path, samples_train_dir)
+    annotations_test = _preprocess_annotations_old(annotations_test_path, samples_test_dir)
+    annotations = pd.concat([annotations_adaptation, annotations_test])
+
     if use_as_label:
-        annotations['label'] = annotations_genuine[use_as_label]
+        annotations['label'] = annotations[use_as_label]
 
     return annotations
 
 
-
 def info_from_filename(filename):
     """
-    Extracts info from the filename
+    Extract info from a filename.
     :param filename:
     :return: parsed info
 
@@ -236,7 +286,10 @@ def Loader(annotations, **kwargs):
 # def main():
 if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
-    paths = read_annotations(use_as_label='label_unif')
+    from dataset_base import load_annotations
+
+    paths = preprocess_annotations('/mnt/sdb1/dp/rt_single', use_as_label='label_unif')
+    # load_annotations
     dataset = Dataset(paths)
 
     # show first image

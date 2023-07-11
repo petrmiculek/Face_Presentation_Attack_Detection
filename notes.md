@@ -2,9 +2,6 @@ commit 24.05. changed the layer freezing -- maybe frozen resnet didn't have any 
 
 doing:
 
-* augmentations  #DONE#
-
-* gradient accummulation  #DONE#
 
 * lime:
     * just call it #DONE#
@@ -17,8 +14,6 @@ doing:
     * hinch: there will be differences with varying num_workers
 
 * compare explanations of two different models
-
-* before running mass-generation of explanations, the evaluate-script needs argparsing #DONE#
 
 * changing paths to the dataset is tricky in:
     * loading a dataset through the datasets.csv already says, where the dataset paths
@@ -153,7 +148,9 @@ done:
 * re-name categories to use only main ones (mask, printed, video, etc.) (adapt RoseYoutu to SIW-M)  #DONE#
 * if all_attacks, report the binary metrics (or always binary and for some modes it will be the same as "non-binary")
   #DONE#
-*
+* augmentations  #DONE#
+* gradient accummulation  #DONE#
+* before running mass-generation of explanations, the evaluate-script needs argparsing #DONE#
 
 #DONE# #DONE# #DONE#
 

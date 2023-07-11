@@ -12,7 +12,7 @@ import seaborn as sns
 
 # local
 # import config
-from dataset_rose_youtu import read_annotations, labels_orig
+from dataset_rose_youtu import preprocess_annotations, labels_orig
 
 
 def plot_category_counts_per_id(paths_all):
@@ -74,7 +74,7 @@ def plot_example_images(paths_all):
 def main():
     """No docstring"""
     ''' Load data annotations '''
-    paths_all = read_annotations()
+    paths_all = preprocess_annotations('TODO path to dataset directory')
 
     ''' Plots styling '''
     sns.set_style('whitegrid')
