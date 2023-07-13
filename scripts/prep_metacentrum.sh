@@ -70,12 +70,16 @@ if [ -z "wont-run" ]; then
   # full eval run
   CUDA_VISIBLE_DEVICE=0 python3 src/evaluate.py -r runs/vivid-glitter-50 -w 2 -b 8 --cam
   # extracting frames from videos
+
   singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
-  cp rose_videos.tar $SCRATCHDIR
-  mkdir $SCRATCHDIR/vids
-  tar -xf $SCRATCHDIR/rose_videos.tar --directory $SCRATCHDIR/vids --checkpoint=.1000
-  mv $SCRATCHDIR/vids/RoseYoutu-full $SCRATCHDIR
-  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs && cd $SCRATCHDIR && tar cf ryi6.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi6.tar /storage/brno2/home/petrmiculek/facepad/
+  rsync -ah --progress rose_videos.tar $SCRATCHDIR
+  cd $SCRATCHDIR
+  mkdir vids
+  tar -xf rose_videos.tar --directory . --checkpoint=.1000
+  # mv $SCRATCHDIR/vids/RoseYoutu-full $SCRATCHDIR
+  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs -f 100 -b 256 && cd $SCRATCHDIR && tar cf ryi7.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi7.tar /storage/brno2/home/petrmiculek/facepad/
+
+  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs -f 2 -b 16 && cd $SCRATCHDIR && tar cf ryi7.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi7.tar /storage/brno2/home/petrmiculek/facepad/
 
   # example output:
   # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_test_all_attacks.csv >dataset_lists/test
@@ -86,5 +90,5 @@ if [ -z "wont-run" ]; then
   # mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
   #/mnt/storage-brno2/home/petrmiculek/RoseYoutu-full
   tar -xf ryi5.tar --directory ryi5 --checkpoint=.1000
-  python3 src/train.py - p $SCRATCHDIR/dataset -e 15 -b 1 -w 2 -l 0.00001
+  python3 src/train.py -p $SCRATCHDIR/dataset -e 15 -b 1 -w 2 -l 0.00001
 fi

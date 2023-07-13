@@ -31,11 +31,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', help='dataset in {rose_youtu, siwm}', type=str, required=True)
 parser.add_argument('-p', '--path', help='path to dataset top-level directory', type=str, required=True)
 # following (3) argument are for one_attack and unseen_attack modes
-parser.add_argument('-k', '--attack_test', help='attack type to test on (1..4), random by default', type=int,
-                    default=-1)
+parser.add_argument('-k', '--attack_test', help='attack type to test on in unseen/one_attack (1..(C-1))',
+                    type=int, default=-1)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
+parser.add_argument('-c', '--comment', type=str, default='')
 
 ''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
 '''
@@ -45,7 +46,7 @@ Every person has the same number of samples, but not the same number of attack t
 
 Tested on:
                 |  rose_youtu  |    siwm    |   rose_youtu_full
-all_attacks     | training OK  |    .       |   .
+all_attacks     | training OK  |    .       |   training OK
 unseen_attack   | training OK  |    .       |   .
 one_attack      |       .      |    .       |   .
 
@@ -63,7 +64,7 @@ if __name__ == '__main__':
     if args.no_log:
         print('Not saving anything, dry run')
 
-    note = ''  # arbitrary extra info: dataset length limit, ...
+    note = args.comment  # arbitrary extra info: dataset length limit, ...
 
     training_mode = args.mode
 
@@ -95,6 +96,13 @@ if __name__ == '__main__':
     paths[id_key] = paths[id_key].astype(int)
     person_ids = pd.unique(paths[id_key])
 
+    ''' Split by person ids '''
+    # IDs 1, 8, 19 are missing in the provided dataset
+    # TODO manual person ids indexes [clean]
+    train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
+    val_ids = np.array([12])
+    test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
+
     ''' Split dataset according to training mode '''
     label_nums = dataset.label_nums_unified
     attack_nums = dataset.attack_nums_unified
@@ -103,15 +111,6 @@ if __name__ == '__main__':
         ''' Train on all attacks, test on all attacks '''
         # note: train_ids, val_ids, test_ids -- everything as a list
         paths['label'] = paths['label_unif']  # 0..4
-        # split subsets based on person ids
-        # val_ids, test_id = np.random.choice(person_ids, size=2, replace=False)
-        # train_ids = np.setdiff1d(person_ids, [val_ids, test_ids])
-
-        # IDs 1, 8, 19 are missing in the provided dataset
-        # TODO manual indexes for now [clean]
-        train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
-        val_ids = np.array([12])
-        test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
 
         # split train/val/test (based on person IDs)
         paths_train = paths[paths[id_key].isin(train_ids)]
@@ -123,21 +122,10 @@ if __name__ == '__main__':
     elif training_mode == 'one_attack':
         ''' Train and test on one attack type '''
         # validation 1 person, test 1 unseen person, train the rest
-
         paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
-        if args.attack_test == -1:
-            # random
-            class_train = class_val = class_test = np.random.choice(attack_nums, size=None,
-                                                                    replace=False)  # note: originally size=1-> LIST
-        else:
-            # specific attack
-            class_test = class_val = class_train = args.attack_test
-
-        # person-splitting
-        val_ids, test_ids = np.random.choice(person_ids, size=2, replace=False)
-        train_ids = np.setdiff1d(person_ids, [val_ids, test_ids])
+        class_test = class_val = class_train = args.attack_test
 
         # split train/val/test (based on attack type and person IDs)
         paths_train = paths[paths['label_unif'].isin([bona_fide, class_train])
@@ -155,27 +143,27 @@ if __name__ == '__main__':
         paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
-        if args.attack_test == -1:
-            class_test = np.random.choice(attack_nums, size=None, replace=False)  # note: None-> INT
-        else:
-            class_test = args.attack_test
-
+        class_test = args.attack_test
         class_val = class_test
         class_train = np.setdiff1d(attack_nums, [class_test])
 
         # person-splitting
-        train_ids = val_ids = test_ids = person_ids
+        # train_ids = val_ids = test_ids = person_ids
+        train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
+        val_ids = np.array([12])
+        test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
 
         # split train/val/test (based on attack type and person IDs)
-        paths_train = paths[paths['label_unif'].isin(
-            [bona_fide, *class_train])
-            # todo: check in comparison to one_attack: *class_train, whereas there is no * [func]
-            # & paths_all[id_key].isin(train_ids)
-        ]
+        paths_train = paths[paths['label_unif'].isin([bona_fide, *class_train])
+                            # todo: check in comparison to one_attack: *class_train, whereas there is no * [func]
+                            & paths[id_key].isin(train_ids)
+                            ]
+        paths_val = paths[paths['label_unif'].isin([bona_fide, class_test])
+                          & (paths[id_key].isin(val_ids))
+                          ]
         paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
-            # & (paths_all[id_key].isin(test_ids))
-        ]
-        paths_val = paths_test  # note: validation == test
+                           & (paths[id_key].isin(test_ids))
+                           ]
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
 
