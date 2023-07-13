@@ -38,5 +38,5 @@ if [ -z "wont-run" ]; then
   # meta
   python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b 16 -e 3 -w 4 -s $RANDOM -m unseen_attack -k 1
   # local
-  python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b 4 -e 3 -w 1 -s 112 -m all_attacks -k 1 -t 100
+  python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b 4 -e 3 -w 1 -s 112 -k 1 -t 100
 if
