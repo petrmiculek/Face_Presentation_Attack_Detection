@@ -34,8 +34,8 @@ pil_logger.setLevel(logging.INFO)
 # local
 import config
 from metrics import confusion_matrix, compute_metrics  # , accuracy
-from util import get_dict, print_dict, keys_append, save_dict_json, count_parameters, update_config
-from util_torch import EarlyStopping, load_model, get_dataset_module
+from util import get_dict, print_dict, keys_append, save_dict_json, update_config
+from util_torch import EarlyStopping, load_model, get_dataset_module, count_parameters
 from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup
 from util_torch import init_device, init_seed
 

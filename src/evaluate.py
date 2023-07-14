@@ -167,7 +167,7 @@ if __name__ == '__main__':
     """
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     if sum([args.lime, args.cam, args.eval, args.emb]) > 1:
-        raise ValueError('Only one of lime, cam, eval, emb can be set')
+        raise ValueError('Choose only one of: lime/cam/eval/emb')
 
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
@@ -385,8 +385,7 @@ if __name__ == '__main__':
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM,
-                          EigenCAM]  # ScoreCAM OOM, FullGrad too different; AblationCAM runs long
+        method_modules = [GradCAM]  # ScoreCAM OOM, FullGrad too different; AblationCAM runs long
         # methods_callables = [ for method in methods_]
         # grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]

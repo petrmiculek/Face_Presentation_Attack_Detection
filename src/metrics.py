@@ -15,20 +15,28 @@ import seaborn as sns
 # -
 
 def compute_metrics(labels, preds, bona_fide=0):
-    # todo: separate binary evaluation from multiclass evaluation, add _binary suffix everywhere, check in W&B [clean]
+    """
+    Compute metrics for binary classification.
+
+    Important: TP=True Positive = Attack classified as Attack
+    It is a binary evaluation, ignoring the specific attack type!
+    """
     if type(labels) == list:
         labels = np.concatenate(labels)
     if type(preds) == list:
         preds = np.concatenate(preds)
 
-    tp = np.sum(np.logical_and(preds != bona_fide, labels != bona_fide))
+    ''' Multi-class Metrics: Accuracy only '''
+    accuracy_multiclass = np.sum(labels == preds) / len(labels)
+
+    ''' Binary Metrics: '''
+    tp = np.sum(np.logical_and(preds != bona_fide, labels != bona_fide))  # binary true positive
     tn = np.sum(np.logical_and(preds == bona_fide, labels == bona_fide))
     fp = np.sum(np.logical_and(preds != bona_fide, labels == bona_fide))
     fn = np.sum(np.logical_and(preds == bona_fide, labels != bona_fide))
 
     ''' Accuracy '''
     accuracy_binary = (tp + tn) / (tp + tn + fp + fn)
-    accuracy = np.sum(labels == preds) / (tp + tn + fp + fn)
 
     ''' Precision '''
     if tp + fp == 0:
@@ -73,7 +81,7 @@ def compute_metrics(labels, preds, bona_fide=0):
         '#TN': tn,
         '#FP': fp,
         '#FN': fn,
-        'Accuracy': accuracy,
+        'Accuracy': accuracy_multiclass,
         'AccuracyBinary': accuracy_binary,
         'Precision': precision,
         'Recall': recall,
@@ -145,6 +153,7 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
     plt.close(fig_cm.figure)
 
 
+# TODO ROC Curve code unused
 '''
 # currently unused
 def plot_roc_curve(gts, predictions, show=True, output_location=None):

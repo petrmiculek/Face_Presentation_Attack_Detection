@@ -128,7 +128,8 @@ glasses = {
 # ############################################### #
 
 
-data_root_dir = join(os.pardir, 'data', 'client')  # todo dataset rose_youtu provide "pardir" from outside [clean]
+# todo old split of dataset rose_youtu, unused [clean]
+data_root_dir = join(os.pardir, 'data', 'client')
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')

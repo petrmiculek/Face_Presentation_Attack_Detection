@@ -5,7 +5,6 @@ import time
 from collections import defaultdict
 
 # external
-from prettytable import PrettyTable
 import numpy as np
 
 import config
@@ -32,32 +31,6 @@ class LogTime:
               ' i| time| message')
         for i, (t, msg) in enumerate(zip(self.times, self.messages)):
             print(f'{i:02d}| {(t - self.times[0]):2.2f}| {msg}')
-
-
-def count_parameters(model, sum_only=False):
-    """
-    Count total number of trainable parameters of a torch model. Prints table of its layers.
-
-    Taken from a previous own project, original source unknown.
-    """
-
-    table = PrettyTable(["Modules", "Parameters"])
-    params = 0
-
-    for name, parameter in model.named_parameters():
-        if not parameter.requires_grad:
-            continue
-
-        param = parameter.numel()
-        table.add_row([name, param])
-        params += param
-
-    if not sum_only:
-        print(table)
-    # print number of params in exponential notation
-    print(f"Params#: {params:.3e}")
-
-    return params
 
 
 def get_dict(obj):

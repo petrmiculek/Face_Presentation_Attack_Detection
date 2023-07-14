@@ -1,46 +1,10 @@
-"""
-    :filename util_torch.py (originally EarlyStopping.py)
 
-    Early Stopping adapted from: vvvvvvv
-
-    Early stopping is used to avoid overfitting of the model.
-    As the PyTorch library does not contain built-in early stopping, this class is from following repository:
-    https://github.com/Bjarten/early-stopping-pytorch
-
-    Original author:
-    Bjarte Mehus Sunde, 2018
-
-    Original author's mail:
-    BjarteSunde@outlook.com
-
-    Licence:
-    MIT License
-
-    Copyright (c) 2018 Bjarte Mehus Sunde
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-"""
 import os
 from os.path import join
 
 import torch
 import numpy as np
+from prettytable import PrettyTable
 # from torchvision.models import resnet18  # unused, architecture loaded locally to allow changes
 from torchvision.models import ResNet18_Weights
 from torchvision.models import shufflenet_v2_x1_0
@@ -100,6 +64,7 @@ def change_silu_efficientnet(model):
 
 
 def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
+    """ Load model, replace classification head, maybe freeze backbone. """
     # todo seed is not used [func]
     if model_name == 'resnet18':
         # load model with pretrained weights
@@ -185,6 +150,113 @@ def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
     return model, preprocess
 
 
+def init_device():
+    """ Initialize device, print setup, set printing format precision. """
+    print(f"Available GPUs: {torch.cuda.device_count()}")
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name(0)}")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f'Running on device: {device}')
+    # Human-readable printing for Numpy + Torch
+    np.set_printoptions(precision=3, suppress=True)
+    torch.set_printoptions(precision=3, sci_mode=False)
+    return device
+
+
+def init_seed(seed=None):
+    """ Set random seed for reproducibility. """
+    if seed is None:
+        print('No random seed set')
+    else:
+        print(f'Random seed: {seed}')
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
+
+    # PyTorch reproducibility
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def get_dataset_module(dataset_name):
+    """
+    Import dataset module.
+    Name-based match for the .py module, specific split is defined later.
+    Placing the code here is a workaround to avoid circular imports.
+    """
+    if dataset_name == 'rose_youtu':
+        import dataset_rose_youtu as dataset_module
+    elif dataset_name == 'siwm':
+        import dataset_siwm as dataset_module
+    else:
+        raise ValueError(f'Unknown dataset name {dataset_name}')
+    return dataset_module
+
+
+def count_parameters(model, sum_only=False):
+    """
+    Count total number of trainable parameters of a torch model. Prints table of its layers.
+
+    Taken from a previous own project, original source unknown.
+    """
+
+    table = PrettyTable(["Modules", "Parameters"])
+    params = 0
+
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+
+        param = parameter.numel()
+        table.add_row([name, param])
+        params += param
+
+    if not sum_only:
+        print(table)
+    # print number of params in exponential notation
+    print(f"Params#: {params:.3e}")
+
+    return params
+
+
+"""
+    :filename util_torch.py (originally EarlyStopping.py)
+
+    Early Stopping adapted from: vvvvvvv
+
+    Early stopping is used to avoid overfitting of the model.
+    As the PyTorch library does not contain built-in early stopping, this class is from following repository:
+    https://github.com/Bjarten/early-stopping-pytorch
+
+    Original author:
+    Bjarte Mehus Sunde, 2018
+
+    Original author's mail:
+    BjarteSunde@outlook.com
+
+    Licence:
+    MIT License
+
+    Copyright (c) 2018 Bjarte Mehus Sunde
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+"""
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
 
@@ -233,42 +305,4 @@ class EarlyStopping:
         self.val_loss_min = val_loss
 
 
-def init_device():
-    print(f"Available GPUs: {torch.cuda.device_count()}")
-    print(f"Current device: {torch.cuda.current_device()}")
-    print(f"Device name: {torch.cuda.get_device_name(0)}")
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f'Running on device: {device}')
-    # Human-readable printing for Numpy + Torch
-    np.set_printoptions(precision=3, suppress=True)
-    torch.set_printoptions(precision=3, sci_mode=False)
-    return device
 
-
-def init_seed(seed=None):
-    if seed is None:
-        print('No random seed set')
-    else:
-        print(f'Random seed: {seed}')
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        os.environ['PYTHONHASHSEED'] = str(seed)
-
-    # PyTorch reproducibility
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-
-def get_dataset_module(dataset_name):
-    """
-    Import dataset module.
-    Name-based match for the .py module, specific split is defined later.
-    Placing the code here is a workaround to avoid circular imports.
-    """
-    if dataset_name == 'rose_youtu':
-        import dataset_rose_youtu as dataset_module
-    elif dataset_name == 'siwm':
-        import dataset_siwm as dataset_module
-    else:
-        raise ValueError(f'Unknown dataset name {dataset_name}')
-    return dataset_module
