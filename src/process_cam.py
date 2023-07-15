@@ -22,7 +22,7 @@ from os.path import join
 import warnings
 
 from dataset_base import show_labels_distribution
-from util_image import overlay_cam
+from util_image import overlay_cam, get_marker
 from util_torch import init_seed, get_dataset_module
 
 # fix for local import problems - add all local directories
@@ -297,7 +297,6 @@ if __name__ == '__main__':
         """
         Not used, since per-sample visualization is not practical for thousands of samples.
         """
-        from src.util import get_marker
 
         # x: perturbation level
         # y: prediction drop

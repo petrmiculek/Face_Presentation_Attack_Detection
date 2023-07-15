@@ -35,7 +35,8 @@ pil_logger.setLevel(logging.INFO)
 # local
 # import dataset_rose_youtu as dataset
 from metrics import compute_metrics, confusion_matrix  # , accuracy
-from util import print_dict, save_i, keys_append, plot_many
+from util import print_dict, save_i, keys_append
+from util_image import plot_many
 from util_torch import init_device, init_seed, load_model_eval, get_dataset_module
 from dataset_base import pick_dataset_version, load_dataset
 import config

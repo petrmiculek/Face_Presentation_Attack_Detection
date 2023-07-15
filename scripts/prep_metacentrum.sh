@@ -77,9 +77,9 @@ if [ -z "wont-run" ]; then
   mkdir vids
   tar -xf rose_videos.tar --directory . --checkpoint=.1000
   # mv $SCRATCHDIR/vids/RoseYoutu-full $SCRATCHDIR
-  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs -f 100 -b 256 && cd $SCRATCHDIR && tar cf ryi7.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi7.tar /storage/brno2/home/petrmiculek/facepad/
+  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs100 -f 100 -b 256 && cd $SCRATCHDIR && tar cf rt_single.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi7.tar /storage/brno2/home/petrmiculek/facepad/
 
-  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs -f 2 -b 16 && cd $SCRATCHDIR && tar cf ryi7.tar --checkpoint=.1000 rose_youtu_imgs && cp ryi7.tar /storage/brno2/home/petrmiculek/facepad/
+  python scripts/extract_rose_youtu_videos.py -i $SCRATCHDIR/RoseYoutu-full -o $SCRATCHDIR/rose_youtu_imgs -f 2 -b 16 && tar cf ryi7.tar --checkpoint=.1000 rose_youtu_imgs  #  && cp ryi7.tar /storage/brno2/home/petrmiculek/facepad/
 
   # example output:
   # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_test_all_attacks.csv >dataset_lists/test
@@ -89,6 +89,11 @@ if [ -z "wont-run" ]; then
   # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_val_all_attacks.csv >dataset_lists/val
   # mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
   #/mnt/storage-brno2/home/petrmiculek/RoseYoutu-full
-  tar -xf ryi5.tar --directory ryi5 --checkpoint=.1000
-  python3 src/train.py -p $SCRATCHDIR/dataset -e 15 -b 1 -w 2 -l 0.00001
+  singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
+  rsync -ah --progress ryi7.tar $SCRATCHDIR
+  tar -xf ryi7.tar --directory . --checkpoint=.1000
+#  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 1 -w 2 -l 0.00001
+  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 2 -a efficientnet_v2_s
+  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 3 -a efficientnet_v2_s
+
 fi

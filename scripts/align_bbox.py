@@ -23,7 +23,7 @@ import pandas as pd
 
 # local
 from util_torch import init_device
-from util import plot_many  # debugging
+from util_image import plot_many
 from util_face import get_ref_landmarks, get_align_transform, transform_bbox
 
 if __name__ == '__main__':

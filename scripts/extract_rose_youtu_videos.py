@@ -26,11 +26,13 @@ from PIL import Image
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
+import matplotlib.pyplot as plt
 
 # local
 from util_torch import init_device
 from util_face import get_ref_landmarks, get_align_transform, transform_bbox, rotate, mtcnn_predict_batched, \
     find_rotation
+from util_image import plot_many
 
 # ashamed to put this here, but len(video) doesn't work on metacentrum
 video_lengths = [492, 402, 427, 348, 350, 351, 347, 357, 381, 347, 366, 501, 401, 501, 382, 376, 332, 313, 398, 413,
@@ -220,7 +222,6 @@ parser.add_argument('-b', '--batch_size', type=int, help='batch size', required=
 
 ''' Global Variables '''
 EXT = '.jpg'
-batch_size = 0
 mtcnn = None  # face detector
 
 img_size = np.array([384, 384])  # size of images to save
@@ -234,18 +235,17 @@ metadata = None  # dataframe for metadata, saved as output
 total_samples = 0
 
 
-def process_batch(batch, b_names, idxs):
+def process_batch(batch, crop_names):
     """ Process a batch of images, saving them to disk.
 
     :param batch: batch of images
-    :param b_names: filenames
-    :param idxs: indices of frames in video
+    :param crop_names: filenames for cropped images
     :return: number of images saved
     box format: [x0, y0, x1, y1]
     landmark format: [x0, y0, x1, y1, x2, y2, x3, y3, x4, y4] =
                     [left_eye, right_eye, nose, left_mouth, right_mouth]
     """
-    global mtcnn, EXT, metadata, output_path, ref_pts, img_size
+    global mtcnn, metadata, output_path, ref_pts, img_size
     n_saved = 0
     try:
         ''' Batch-predict '''
@@ -253,47 +253,74 @@ def process_batch(batch, b_names, idxs):
         ''' Keep only detected faces frames '''
         valid_idxs = np.array([i for i, b in enumerate(boxes) if b is not None])
         # ^^^ forget about np.where, mtcnn.detect returns [None] when len(batch) == 1 and None when >= 2
-        if len(valid_idxs) == 0:
-            return n_saved  # no valid boxes
-        boxes, probs, landmarks, idxs = boxes[valid_idxs], probs[valid_idxs], landmarks[valid_idxs], idxs[valid_idxs]
+        boxes, probs, landmarks, crop_names = boxes[valid_idxs], probs[valid_idxs], landmarks[valid_idxs], crop_names[
+            valid_idxs]
+        batch = [batch[i] for i in valid_idxs]
         ''' Keep best bounding box per frame '''
         boxes, probs, landmarks = mtcnn.select_boxes(boxes, probs, landmarks, batch, method=mtcnn.selection_method)
-        batch = [batch[i] for i in valid_idxs]
         frame_dims = np.array([b.size for b in batch])
         boxes, landmarks = boxes[:, 0, :], landmarks[:, 0, :]  # remove 1-dim
+        # check if bounding box is inside the frame
         valid_idxs = []
         for i, b in enumerate(boxes):  # check for bbox outside the frame
             if b[0] >= 0 and b[1] >= 0 and b[2] <= frame_dims[i][0] and b[3] <= frame_dims[i][1]:
                 valid_idxs.append(i)
+
         # filter valid idxs again
-        boxes, probs, landmarks, idxs = boxes[valid_idxs], probs[valid_idxs], landmarks[valid_idxs], idxs[valid_idxs]
+        batch = [batch[i] for i in valid_idxs]
+        boxes, probs, landmarks, crop_names = boxes[valid_idxs], probs[valid_idxs], landmarks[valid_idxs], crop_names[
+            valid_idxs]
         frame_dims = [frame_dims[i] for i in valid_idxs]
 
         ''' Per-image saving of cropped faces, and metadata '''
-        for i, i_frame in enumerate(idxs):
+        crops = []
+        crops_data = []
+        for i, box in enumerate(boxes):
             ''' Align face'''
             transform = get_align_transform(landmarks[i], ref_pts)
             crop = cv2.warpAffine(np.array(batch[i]), transform, img_size, borderMode=cv2.BORDER_CONSTANT,
                                   flags=cv2.INTER_AREA)
             box_cropped = transform_bbox(boxes[i], transform)
-            crop_filename = f"{b_names[i]}_crop_{i_frame}{EXT}"
-            path_crop = join(output_path, crop_filename)
             ''' Check for low-quality crops '''
             laplacian_var = cv2.Laplacian(crop, cv2.CV_64F).var()
             if laplacian_var < TH_LAPLACIAN:
                 continue  # skip blurry images
 
+            crops.append(crop)
+            crops_data.append({'path': crop_names[i],  # save metadata
+                               'box_orig': np.int32(boxes[i]),  # frame-coords
+                               'box': box_cropped,  # crop-coords
+                               'landmarks': np.int32(landmarks[i]),  # frame-coords
+                               'dim_orig': frame_dims[i],  # frame-coords
+                               'face_prob': probs[i],
+                               'laplacian_var': laplacian_var})
+        ''' Re-predict on cropped images '''
+        crops = np.array(crops)
+        c_boxes, c_probs, c_landmarks = mtcnn_predict_batched(mtcnn, crops)
+        # get valid indexes and apply them
+        valid_idxs = np.array([i for i, b in enumerate(c_boxes) if b is not None])
+        c_boxes, c_probs, c_landmarks = c_boxes[valid_idxs], c_probs[valid_idxs], c_landmarks[valid_idxs]
+        crops_data = [crops_data[i] for i in valid_idxs]
+        crops = [crops[i] for i in valid_idxs]
+        c_boxes, c_probs, c_landmarks = mtcnn.select_boxes(c_boxes, c_probs, c_landmarks, crops,
+                                                           method=mtcnn.selection_method)
+        assert (len(c_boxes) == len(c_probs) == len(c_landmarks) == len(crops_data) == len(crops))
+        for i, ls in enumerate(c_landmarks):
+            if ls is None:
+                continue
+            ls = np.float32(ls[0])
+            # Verify landmarks are close to the reference landmarks
+            dst_ls = np.mean(np.linalg.norm(ls - ref_pts, axis=1))
+            if dst_ls > 30:
+                continue
             ''' Save image + metadata '''
-            cv2.imwrite(path_crop, cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))  # save cropped face
-            metadata.append({'source': f'{b_names[i]}.mp4',  # save metadata
-                             'path': crop_filename,
-                             'box_orig': np.int32(boxes[i]),  # frame-coords
-                             'box': box_cropped,  # crop-coords
-                             'landmarks': np.int32(landmarks[i]),  # frame-coords
-                             'dim_orig': frame_dims[i],  # frame-coords
-                             'face_prob': probs[i]})
+            path_crop = join(output_path, crops_data[i]['path'])
+            cv2.imwrite(path_crop, cv2.cvtColor(crops[i], cv2.COLOR_RGB2BGR))
+            metadata.append(crops_data[i])
             n_saved += 1
     except Exception as e:
+        # catch error when empty valid idxs, or another error, and just continue
+        # happens in cases where no crops would have been valid anyway
         print('process_batch:', e)
     finally:
         return n_saved
@@ -318,17 +345,16 @@ if __name__ == '__main__':
     print(f'Found {len(vid_paths)} files matching "{matching_pattern}"')
     ''' Face Detector - MTCNN '''
     device = init_device()
-    mtcnn = MTCNN(image_size=384, select_largest=False, device=device, post_process=False)
+    mtcnn = MTCNN(image_size=384, select_largest=True, device=device, post_process=False, min_face_size=150)
     # vid_filename = filenames[0]
     metadata = []
     err_counter = 0
-    no_samples_vids = []
     total_samples = 0
     rotations = []
 
     ''' Processing videos '''
     pbar = tqdm(enumerate(vid_paths, start=start), total=len(vid_paths))
-    frames, b_names, idxs, frame_dims = [], [], [], []
+    frames, v_names, crop_names = [], [], []
     for i_vid, vid_path in pbar:
         vid_filename = basename(vid_path)
         filename_base = vid_filename[: -len(".mp4")]
@@ -342,11 +368,10 @@ if __name__ == '__main__':
             rot = find_rotation(mtcnn, frame)
             rotations.append({'source': vid_filename, 'rotation': rot, 'rotation_meta': rot_meta})
             if rot is None:
-                no_samples_vids.append(vid_filename)
                 continue
-            # v_len = int(v_cap.get(cv2.CAP_PROP_FRAME_COUNT))  # does not work on metacentrum
+            # v_len = int(video.get(cv2.CAP_PROP_FRAME_COUNT))  # does not work on metacentrum
             v_len = video_lengths[i_vid]
-            ''' Write to zip (in memory) '''
+            ''' Process video  '''
             filter_rate = v_len // args.frames
             filter_rate = max(1, filter_rate)  # avoid zero-div
             for i_frame in range(1000):  # max video length = 826
@@ -361,15 +386,13 @@ if __name__ == '__main__':
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     # Accumulate batch
                     frames.append(Image.fromarray(frame))
-                    idxs.append(i_frame)
-                    b_names.append(filename_base)
+                    crop_names.append(f'{filename_base}_crop_{i_frame}{EXT}')
 
                 # Batch Predict
                 if len(frames) >= args.batch_size or last_frame:
                     # ^ full batch, or last frame of video ^
-                    samples_saved = process_batch(frames, np.array(b_names), np.array(idxs))
-                    total_samples += samples_saved
-                    frames, b_names, idxs, frame_dims = [], [], [], []
+                    samples_saved += process_batch(frames, np.array(crop_names))
+                    frames, crop_names = [], []
                     pbar.set_description(desc=f'vid {i_vid}/{len(vid_paths)}, '
                                               f'frame {i_frame}/{v_len}, '
                                               f'saved {total_samples} (+{samples_saved})')
@@ -384,8 +407,7 @@ if __name__ == '__main__':
                 print('main:', e)
             err_counter += 1
         finally:
-            if samples_saved == 0:
-                no_samples_vids.append(filename_base)
+            total_samples += samples_saved
 
     # end of all videos
     print(f'Error count: {err_counter} / {len(vid_paths)}')
@@ -401,8 +423,14 @@ if __name__ == '__main__':
 
     df_rot = pd.DataFrame(rotations)
     df_rot.to_pickle(join(output_path, 'metadata_rotations.pkl'))
+    print(f'No rotation found: {sum(df_rot.rotation.isna())}')
 
-    print(f'No sample vids: {no_samples_vids}')
+    # find videos without samples
+    videos_with_samples = df.path.apply(lambda x: x.split('_crop_')[0]).unique()
+    vids_basenames = set(basename(p)[:-len(".mp4")] for p in vid_paths)
+    no_samples_vids = vids_basenames - set(videos_with_samples)
+
+    print(f'No sample vids: {len(no_samples_vids)}')
     # save no-sample vids
-    with open(join(output_path, 'no_samples.txt'), 'w') as f:
+    with open(join(output_path, 'metadata_vids_skipped.txt'), 'w') as f:
         f.write('\n'.join(no_samples_vids))
