@@ -1,10 +1,9 @@
 import cv2
 import numpy as np
-from pytorch_grad_cam.utils.image import show_cam_on_image
-from torch import Tensor as torch_tensor
 
 
 def overlay_cam(img, cam):
+    from pytorch_grad_cam.utils.image import show_cam_on_image
     """
     Overlay CAM on image.
     :param img: PIL jpeg ~uint8?, WxHx3
@@ -32,6 +31,8 @@ def overlay_cam(img, cam):
 
 
 def deprocess(img):
+    from torch import Tensor as torch_tensor
+
     if isinstance(img, torch_tensor):
         img = img.detach().cpu().numpy()  # might fail when no grad?
         img = img.transpose(1, 2, 0)
@@ -55,7 +56,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
     :param show: toggle showing the figure
     :param kwargs: keyword arguments for imshow
     """
-    import torch
+    from torch import Tensor as torch_tensor
     from matplotlib import pyplot as plt
     from PIL.Image import Image
 
@@ -88,7 +89,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
         else:
             ax_i = ax[i // cols, i % cols]  # indexing correct, read properly!
 
-        if isinstance(img, torch.Tensor):
+        if isinstance(img, torch_tensor):
             img = np.array(img.cpu())
 
         if isinstance(img, Image):
