@@ -49,7 +49,7 @@ parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, ru
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=None)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=None)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', default=None)
-parser.add_argument('-k', '--attack', help='test attack for unseen_attack/one_attack (1..C)', type=str, default=None)
+parser.add_argument('-k', '--attack', help='test attack for unseen_attack/one_attack (1..C)', type=int, default=None)
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 # explain interplay of dataset and path

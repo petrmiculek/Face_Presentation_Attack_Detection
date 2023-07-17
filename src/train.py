@@ -54,7 +54,7 @@ parser.add_argument('-t', '--limit', help='limit dataset size', type=int, defaul
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
-parser.add_argument('-k', '--attack', help='attack for unseen_attack and one_attack modes  (1..C)', type=str,
+parser.add_argument('-k', '--attack', help='attack for unseen_attack and one_attack modes  (1..C)', type=int,
                     default=None)  # falsy default value: also ''
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
