@@ -30,5 +30,5 @@ blur_img_s = 29  # empirically found to drop prediction confidence below chance 
 from os.path import join
 
 dataset_lists_dir = 'dataset_lists'  # directory for dataset lists (annotations and paths)
-path_datasets_csv = join(dataset_lists_dir, 'datasets.csv')  # list of datasets
+path_datasets_metadata = join(dataset_lists_dir, 'datasets.pkl')  # list of datasets
 runs_dir = 'runs'  # directory for saving models, logs, etc.

@@ -28,14 +28,6 @@ from dataset_base import BaseDataset, StandardLoader
 # import config
 
 """
-TODO:
-- meaning of x and y --> person_ID0, label_bin #DONE#
-- extract other info from the filename  #DONE#
-- extract info from dirname above filename  #DONE#
-
-"""
-
-"""
 Rose Youtu Dataset
 """
 name = 'rose_youtu'
@@ -125,16 +117,15 @@ glasses = {
     'g': 'glasses',
     'wg': 'without glasses'
 }
-# ############################################### #
-
-
-# todo old split of dataset rose_youtu, unused [clean]
+# ################################################
+# old split of dataset rose_youtu, unused
 data_root_dir = join(os.pardir, 'data', 'client')
 samples_dir = join(data_root_dir, 'rgb')
 samples_train_dir = join(samples_dir, 'adaptation')
 samples_test_dir = join(samples_dir, 'test')
 annotations_adaptation_path = join(data_root_dir, 'adaptation_list.txt')
 annotations_test_path = join(data_root_dir, 'test_list.txt')
+# ################################################
 """
 ^ dataset-split used in Zhi Li, et al., 2022, 
 “One-Class Knowledge Distillation for Face Presentation Attack Detection”.

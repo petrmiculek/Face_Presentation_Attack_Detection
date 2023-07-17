@@ -121,7 +121,7 @@ def pick_dataset_version(name, mode, attack=None, note=None):
     if note is None:
         name, note = split_dataset_name(name)
 
-    datasets = pd.read_csv(config.path_datasets_csv)
+    datasets = pd.read_pickle(config.path_datasets_metadata)
     if attack is not None and mode == 'all_attacks':
         print(f'Ignoring attack number, training mode is: {mode}.')
         attack = None
@@ -161,9 +161,9 @@ def load_annotations(metadata_row, seed, path_prefix=None, limit=-1, shuffle=Fal
         return join(path_prefix, basename(x))
 
     # load annotations
-    paths_train = pd.read_csv(metadata_row['path_train'])
-    paths_val = pd.read_csv(metadata_row['path_val'])
-    paths_test = pd.read_csv(metadata_row['path_test'])
+    paths_train = pd.read_pickle(metadata_row['path_train'])
+    paths_val = pd.read_pickle(metadata_row['path_val'])
+    paths_test = pd.read_pickle(metadata_row['path_test'])
     # add index column "idx"
     paths_train['idx'] = paths_train.index
     paths_val['idx'] = paths_val.index
@@ -252,14 +252,18 @@ def load_dataset(metadata_row, dataset_module, path_prefix=None, limit=-1, quiet
     return loader_train, loader_val, loader_test
 
 
-def show_labels_distribution(labels, split, num_classes):
+def show_labels_distribution(labels, split_name='', num_classes=None):
     """
-    Print labels distribution for a split.
+    Print labels distribution for a dataset split.
 
-    :param labels: Pandas Series with labels
-    :param split: String with split name
+    :param labels: Pandas Series with dataset labels
+    :param split_name: String with split name
     :param num_classes: Number of classes
     """
+    if num_classes is None:
+        num_classes = len(labels.unique())
+        # must assume that all classes are present in the split
+
     value_counts = labels.value_counts().sort_index()
     class_occurences = []
     for i in range(num_classes):
@@ -267,7 +271,7 @@ def show_labels_distribution(labels, split, num_classes):
             class_occurences.append(value_counts[i])
         else:
             class_occurences.append(0)
-    print(f'{split}:', class_occurences)
+    print(f'{split_name}:', class_occurences)
 
 
 def get_dataset_setup(dataset_module, training_mode):

@@ -21,6 +21,7 @@ import config
 import dataset_rose_youtu
 import dataset_siwm
 from util import save_dict_json
+from dataset_base import show_labels_distribution
 
 ''' Logging format '''
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.DEBUG,
@@ -48,7 +49,7 @@ Tested on:
                 |  rose_youtu  |    siwm    |   rose_youtu_full
 all_attacks     | training OK  |    .       |   training OK
 unseen_attack   | training OK  |    .       |   training OK
-one_attack      |       .      |    .       |   .
+one_attack      |       .      |    .       |   training OK
 
 # generation failed for one_attack on metacentrum
 '''
@@ -92,6 +93,34 @@ if __name__ == '__main__':
     if mode in ['one_attack', 'unseen_attack']:
         if args.attack_test not in dataset.attack_nums_unified:
             raise ValueError(f'Attack test must be in {dataset.attack_nums_unified}')
+
+    ''' Set up directories and filenames '''
+    mode_long = mode
+    if mode in ['unseen_attack', 'one_attack']:
+        mode_long += f'_{args.attack_test}'
+
+    lists_dir = config.dataset_lists_dir
+    if not os.path.isdir(lists_dir) and not args.no_log:
+        logging.info(f'Creating dir: {lists_dir}')
+        os.makedirs(lists_dir)
+
+    logging.info(f'Writing to dir: {lists_dir}')
+    save_path_train = join(lists_dir, f'dataset_{dataset.name}_train_{mode_long}.pkl')
+    save_path_val = join(lists_dir, f'dataset_{dataset.name}_val_{mode_long}.pkl')
+    save_path_test = join(lists_dir, f'dataset_{dataset.name}_test_{mode_long}.pkl')
+
+    # stop if files already exist
+    if any(isfile(x) for x in [save_path_train, save_path_val, save_path_test]):
+        logging.error('Annotation files already exist, quitting.')
+        logging.error(f'Dataset: {dataset.name}, Training mode: {mode_long}')
+        logging.error(f'Files: {save_path_train}, .. val, .. test')
+        raise FileExistsError(
+            f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {mode_long}')
+
+    else:  # create new files
+        logging.info('Creating new annotation files.')
+        logging.info(f'Dataset: {dataset.name}, Training mode: {mode_long}')
+        logging.info(f'Files: {save_path_train}, .. val, .. test')
 
     ''' Read annotations (paths to samples + labels) '''
     paths = dataset.preprocess_annotations(args.path)
@@ -171,35 +200,6 @@ if __name__ == '__main__':
     assert all(len(p) > 0 for p in [paths_train, paths_val, paths_test]), \
         'Empty split'
 
-    ''' Set up directories and filenames '''
-    mode_long = mode
-    if mode in ['unseen_attack', 'one_attack']:
-        mode_long += f'_{class_test}'
-
-    if True:
-        lists_dir = config.dataset_lists_dir
-        if not os.path.isdir(lists_dir) and not args.no_log:
-            logging.info(f'Creating dir: {lists_dir}')
-            os.makedirs(lists_dir)
-
-        logging.info(f'Writing to dir: {lists_dir}')
-        save_path_train = join(lists_dir, f'dataset_{dataset.name}_train_{mode_long}.csv')
-        save_path_val = join(lists_dir, f'dataset_{dataset.name}_val_{mode_long}.csv')
-        save_path_test = join(lists_dir, f'dataset_{dataset.name}_test_{mode_long}.csv')
-
-        # quit if files already exist
-        if isfile(save_path_train) or isfile(save_path_val) or isfile(save_path_test):
-            logging.error('Annotation files already exist, quitting.')
-            logging.error(f'Dataset: {dataset.name}, Training mode: {mode_long}')
-            logging.error(f'Files: {save_path_train}, .. val, .. test')
-            raise FileExistsError(
-                f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {mode_long}')
-
-        else:  # create new files
-            logging.info('Creating new annotation files.')
-            logging.info(f'Dataset: {dataset.name}, Training mode: {mode_long}')
-            logging.info(f'Files: {save_path_train}, .. val, .. test')
-
     ''' Shuffle, limit length '''
     # unused, shuffling is done during dataset loading, not creation
     if False:
@@ -259,9 +259,9 @@ if __name__ == '__main__':
 
     ''' Save '''
     if not args.no_log:
-        paths_train.to_csv(save_path_train, index=False)
-        paths_val.to_csv(save_path_val, index=False)
-        paths_test.to_csv(save_path_test, index=False)
+        paths_train.to_pickle(save_path_train)
+        paths_val.to_pickle(save_path_val)
+        paths_test.to_pickle(save_path_test)
         print('Saved dataset to:', save_path_train, save_path_val, save_path_test)
         ''' Save metadata '''
         save_dict_json(metadata, save_path_metadata)
@@ -279,21 +279,25 @@ if __name__ == '__main__':
 
     # make metadata dataframe-serializable (list to str)
     for key in metadata:
-        if isinstance(metadata[key], np.ndarray):
-            metadata[key] = metadata[key].tolist()
-        if isinstance(metadata[key], list):  # no elif intentional
-            metadata[key] = str(metadata[key])
+        if isinstance(metadata[key], list):
+            metadata[key] = np.array(metadata[key])
+            # metadata[key] = str(metadata[key])
 
     # convert metadata to dataframe, one row only, dictionary keys as columns
-    df = pd.DataFrame(metadata, index=[0])
+    df = pd.DataFrame([metadata])  # [] because a dict key is 1 cell, not 1 whole column
 
-    # make csv out of metadata
-    path_datasets_csv = config.path_datasets_csv
+    ''' Save metadata '''
+    path_datasets_metadata = config.path_datasets_metadata
     if not args.no_log:
-        # append to csv
-        if not isfile(path_datasets_csv):
-            df.to_csv(path_datasets_csv)
-        else:
-            df.to_csv(path_datasets_csv, mode='a', header=False)
+        if not isfile(path_datasets_metadata):
+            df.to_pickle(path_datasets_metadata)
+        else:  # append to existing
+            df_old = pd.read_pickle(path_datasets_metadata)
+            df = pd.concat([df_old, df], ignore_index=True)
+            df.to_pickle(path_datasets_metadata)
 
     print('Datasets entry:\n', df)
+
+    # show labels distribution
+    for name, p in zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test]):
+        show_labels_distribution(p['label'], name, num_classes)
