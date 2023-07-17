@@ -6,6 +6,7 @@ from collections import defaultdict
 
 # external
 import numpy as np
+import pandas as pd
 
 
 
@@ -107,10 +108,15 @@ def save_i(path, file, overwrite=False):
     else:
         if exists:
             print(f'File {path} exists, overwriting.')
-        np.save(path, file)
-
+        if isinstance(file, np.ndarray):
+            np.save(path, file)
+        elif isinstance(file, pd.DataFrame):
+            file.to_pickle(path)
+        else:
+            raise ValueError(f'Unknown type {type(file)}')
 
 def update_config(args_dict, global_vars=True, hparams=True):
+    """ Copy args to config (project-specific). """
     import config
     # update config with args
     if global_vars:

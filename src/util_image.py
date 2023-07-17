@@ -12,8 +12,8 @@ def overlay_cam(img, cam):
 
     - cubic looks better but it doesn't maintain the value range => clamp or rescale
     - viridis = default matplotlib colormap
-    - todo: how is the colormap applied? [0, 1] or [min, max]?
-    - blending weight arbitrary
+    - how is the colormap applied? [0, 1] or [min, max]?
+    - blending image_weight chosen empirically
     """
 
     # normalize image and cam
@@ -31,11 +31,12 @@ def overlay_cam(img, cam):
 
 
 def deprocess(img):
+    """ Normalize image for visualization. """
     from torch import Tensor as torch_tensor
 
     if isinstance(img, torch_tensor):
-        img = img.detach().cpu().numpy()  # might fail when no grad?
-        img = img.transpose(1, 2, 0)
+        img = img.detach().cpu().numpy()
+        img = img.transpose(1, 2, 0)  # CHW -> HWC
     img -= np.mean(img)
     img = img / (np.std(img) + 1e-5)
     img *= 0.1
@@ -43,6 +44,79 @@ def deprocess(img):
     img = np.clip(img, 0, 1)
     # don't make image uint8
     return img
+
+
+def normalize(img):
+    """ Rescale image values to [0, 1]. """
+    return (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
+
+
+def sobel_edges(img):
+    """
+    Detect image edges (Sobel filter).
+
+    Adapted from: https://docs.opencv.org/4.8.0/d2/d2c/tutorial_sobel_derivatives.html
+
+    parameters `k` etc. chosen empirically based on few manually observed images,
+    aiming for a rough outline of the contours.
+
+    :param img: np array float32, WxHx3
+    :return: np array float32, WxHx3
+    """
+    # grayscale, blur, sobel (x + y), sum, normalize
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.GaussianBlur(img, (3, 3), 0)
+    img_x = cv2.Sobel(img, cv2.CV_32F, 1, 0, ksize=5, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
+    img_y = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize=5, scale=1, delta=0, borderType=cv2.BORDER_DEFAULT)
+    img_x = cv2.convertScaleAbs(img_x)
+    img_y = cv2.convertScaleAbs(img_y)
+    img = normalize(img_x + img_y)
+    return img
+
+
+class SobelFakeCAM:
+    """
+    Fake CAM - Sobel edge detector.
+
+    CAM-like interface for a model-agnostic, training-data-agnostic explanation.
+    """
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __call__(self, input_tensor, *args, **kwargs):
+        import torch
+        if isinstance(input_tensor, torch.Tensor):
+            input_tensor = input_tensor[0].cpu().numpy().transpose(1, 2, 0)
+
+        return sobel_edges(input_tensor)
+
+
+class CircleFakeCAM:
+    """
+    Fake CAM - centered circle.
+
+    CAM-like interface for a model-agnostic, (all-) data-agnostic explanation.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.cache = dict()
+
+    def __call__(self, input_tensor, *args, **kwargs):
+        shape = input_tensor.shape
+        if input_tensor.ndim == 4:
+            shape = shape[1:]
+        if shape in self.cache:
+            expl = self.cache[shape]
+        else:
+            center = (shape[0] // 2, shape[1] // 2)
+            dists = np.sqrt((np.arange(0, shape[0])[:, None] - center[0]) ** 2 + (
+                    np.arange(0, shape[1])[None, :] - center[1]) ** 2)
+            expl = normalize(-dists)
+            self.cache[shape] = expl
+
+        return expl
 
 
 def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwargs):

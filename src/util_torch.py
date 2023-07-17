@@ -1,16 +1,15 @@
-
+# stdlib
 import os
 from os.path import join
 
+# external
 import torch
 import numpy as np
 from prettytable import PrettyTable
-# from torchvision.models import resnet18  # unused, architecture loaded locally to allow changes
+from torch.nn import functional as F
 from torchvision.models import ResNet18_Weights
-from torchvision.models import shufflenet_v2_x1_0
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
 
-import config
 # local
 from src.resnet18 import resnet18
 from src.augmentation import ClassificationPresetTrain, ClassificationPresetEval
@@ -137,6 +136,8 @@ def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
 
 def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
     """ Load Model """
+    import config
+
     model_name = model_name
     model, preprocess = load_model(model_name, num_classes)
     model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt'), map_location=device), strict=False)
@@ -217,6 +218,15 @@ def count_parameters(model, sum_only=False):
     print(f"Params#: {params:.3e}")
 
     return params
+
+
+def predict(model, inputs):
+    """ Predict on batch, return Numpy preds and classes. """
+    with torch.no_grad():
+        preds_raw = model(inputs)
+        probs = F.softmax(preds_raw, dim=1).cpu().numpy()
+        classes = np.argmax(probs, axis=1)
+    return probs, classes
 
 
 """
@@ -303,6 +313,3 @@ class EarlyStopping:
             self.trace_func('Saving model ...')
 
         self.val_loss_min = val_loss
-
-
-

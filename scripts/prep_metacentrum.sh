@@ -14,12 +14,12 @@ if [ -z "$SCRATCHDIR" ]; then
   export REPLACE='/dev/shm/'
 else
   echo "# Running on cluster"
+  # NOT NEEDED ANYMORE :)  vvvvvv
   # read header, count number of commas before path column
   header_idx_path="$(head -n 1 dataset_lists/dataset_rose_youtu_test_all_attacks.csv | tr ',' '\n' | grep -n 'path' | cut -d ':' -f 1)"
   #  export FIND='..'  # if dataset never overwritten
   first_lines="$(head dataset_lists/dataset_*.csv -n 3 | tail -n 1)"
-
-  export FIND="${first_lines%%rose_youtu_crops4*}"  # TODO temporary
+  export FIND="${first_lines%%rose_youtu_crops*}"
   export REPLACE="$SCRATCHDIR/rose_youtu_full/"
 #  export REPLACE="/storage/brno2/home/petrmiculek/rose_youtu_full/"
 fi
@@ -90,9 +90,12 @@ if [ -z "wont-run" ]; then
   #/mnt/storage-brno2/home/petrmiculek/RoseYoutu-full
   singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
   rsync -ah --progress ryi7.tar $SCRATCHDIR
-  tar -xf ryi7.tar --directory . --checkpoint=.10000
+  tar -xf ry_images50_filtered.tar --directory . --checkpoint=.10000
 #  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 1 -w 2 -l 0.00001
   python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 2 -a efficientnet_v2_s
   python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 3 -a efficientnet_v2_s
+  
+    python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 32 -w 4 -l 0.00001 -m all_attacks -a efficientnet_v2_s
 
+python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m all_attacks -c full
 fi

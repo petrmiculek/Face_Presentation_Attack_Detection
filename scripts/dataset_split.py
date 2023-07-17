@@ -16,11 +16,9 @@ sys.path.append('src')
 sys.path.extend([d for d in os.listdir() if os.path.isdir(d)])
 
 # local
-import config
 import dataset_rose_youtu
 import dataset_siwm
-from util import save_dict_json, xor
-from dataset_base import BaseDataset, StandardLoader
+from util import save_dict_json
 
 ''' Logging format '''
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.DEBUG,
@@ -47,7 +45,7 @@ Every person has the same number of samples, but not the same number of attack t
 Tested on:
                 |  rose_youtu  |    siwm    |   rose_youtu_full
 all_attacks     | training OK  |    .       |   training OK
-unseen_attack   | training OK  |    .       |   .
+unseen_attack   | training OK  |    .       |   training OK
 one_attack      |       .      |    .       |   .
 
 # generation failed for one_attack on metacentrum
@@ -58,15 +56,14 @@ if __name__ == '__main__':
     """
     Create dataset training/val/test splits.
     """
+    ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     seed = args.seed if args.seed else 42
-    np.random.seed(seed)
     if args.no_log:
         print('Not saving anything, dry run')
 
     note = args.comment  # arbitrary extra info: dataset length limit, ...
-
-    training_mode = args.mode
+    mode = args.mode
 
     if args.dataset == 'rose_youtu':
         dataset = dataset_rose_youtu
@@ -77,18 +74,19 @@ if __name__ == '__main__':
 
     bona_fide = 0  # todo does not apply for siwm, also read this from dataset [func] [warn]
 
-    if training_mode == 'all_attacks':
+    if mode == 'all_attacks':
         label_names = dataset.label_names_unified
         num_classes = len(dataset.labels_unified)
-    elif training_mode == 'one_attack':
+    elif mode == 'one_attack':
         label_names = ['genuine', 'attack']
         num_classes = 2
-    elif training_mode == 'unseen_attack':
+    elif mode == 'unseen_attack':
         label_names = ['genuine', 'attack']
         num_classes = 2
     else:
-        raise ValueError(f'Unknown training mode: {training_mode}')
+        raise ValueError(f'Unknown training mode: {mode}')
 
+    np.random.seed(seed)
     ''' Read annotations (paths to samples + labels) '''
     paths = dataset.preprocess_annotations(args.path)
 
@@ -98,7 +96,6 @@ if __name__ == '__main__':
 
     ''' Split by person ids '''
     # IDs 1, 8, 19 are missing in the provided dataset
-    # TODO manual person ids indexes [clean]
     train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
     val_ids = np.array([12])
     test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
@@ -107,7 +104,7 @@ if __name__ == '__main__':
     label_nums = dataset.label_nums_unified
     attack_nums = dataset.attack_nums_unified
 
-    if training_mode == 'all_attacks':
+    if mode == 'all_attacks':
         ''' Train on all attacks, test on all attacks '''
         # note: train_ids, val_ids, test_ids -- everything as a list
         paths['label'] = paths['label_unif']  # 0..4
@@ -119,7 +116,7 @@ if __name__ == '__main__':
 
         class_train = class_val = class_test = 'all'
 
-    elif training_mode == 'one_attack':
+    elif mode == 'one_attack':
         ''' Train and test on one attack type '''
         # validation 1 person, test 1 unseen person, train the rest
         paths['label'] = paths['label_bin']  # 0,1
@@ -135,11 +132,8 @@ if __name__ == '__main__':
         paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
                            & paths[id_key].isin([test_ids])]
 
-    elif training_mode == 'unseen_attack':
+    elif mode == 'unseen_attack':
         ''' Train on all attacks except one, test on the unseen attack '''
-        # IDs not separated -- OK
-
-        # note: test set == validation set
         paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
@@ -147,25 +141,15 @@ if __name__ == '__main__':
         class_val = class_test
         class_train = np.setdiff1d(attack_nums, [class_test])
 
-        # person-splitting
-        # train_ids = val_ids = test_ids = person_ids
-        train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
-        val_ids = np.array([12])
-        test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
-
         # split train/val/test (based on attack type and person IDs)
         paths_train = paths[paths['label_unif'].isin([bona_fide, *class_train])
-                            # todo: check in comparison to one_attack: *class_train, whereas there is no * [func]
-                            & paths[id_key].isin(train_ids)
-                            ]
+                            & paths[id_key].isin(train_ids)]
         paths_val = paths[paths['label_unif'].isin([bona_fide, class_test])
-                          & (paths[id_key].isin(val_ids))
-                          ]
+                          & (paths[id_key].isin(val_ids))]
         paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
-                           & (paths[id_key].isin(test_ids))
-                           ]
+                           & (paths[id_key].isin(test_ids))]
     else:
-        raise ValueError(f'Unknown training mode: {training_mode}')
+        raise ValueError(f'Unknown training mode: {mode}')
 
     ''' Safety check '''
     unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
@@ -178,9 +162,9 @@ if __name__ == '__main__':
         'bona_fide label used as an attack label'
     # TODO check for string x int comparisons [warn]
 
-    training_mode_long = training_mode
-    if training_mode in ['unseen_attack', 'one_attack']:
-        training_mode_long += f'_{class_test}'
+    mode_long = mode
+    if mode in ['unseen_attack', 'one_attack']:
+        mode_long += f'_{class_test}'
 
     if True:
         ''' Set up directories and filenames '''
@@ -190,21 +174,21 @@ if __name__ == '__main__':
             os.makedirs(dataset_lists_dir)
 
         logging.info(f'Writing to dir: {dataset_lists_dir}')
-        save_path_train = join(dataset_lists_dir, f'dataset_{dataset.name}_train_{training_mode_long}.csv')
-        save_path_val = join(dataset_lists_dir, f'dataset_{dataset.name}_val_{training_mode_long}.csv')
-        save_path_test = join(dataset_lists_dir, f'dataset_{dataset.name}_test_{training_mode_long}.csv')
+        save_path_train = join(dataset_lists_dir, f'dataset_{dataset.name}_train_{mode_long}.csv')
+        save_path_val = join(dataset_lists_dir, f'dataset_{dataset.name}_val_{mode_long}.csv')
+        save_path_test = join(dataset_lists_dir, f'dataset_{dataset.name}_test_{mode_long}.csv')
 
         # quit if files already exist
         if isfile(save_path_train) or isfile(save_path_val) or isfile(save_path_test):
             logging.error('Annotation files already exist, quitting.')
-            logging.error(f'Dataset: {dataset.name}, Training mode: {training_mode_long}')
+            logging.error(f'Dataset: {dataset.name}, Training mode: {mode_long}')
             logging.error(f'Files: {save_path_train}, .. val, .. test')
             raise FileExistsError(
-                f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {training_mode_long}')
+                f'Annotation files already exist, quitting. Dataset: {dataset.name}, Training mode: {mode_long}')
 
         else:  # create new files
             logging.info('Creating new annotation files.')
-            logging.info(f'Dataset: {dataset.name}, Training mode: {training_mode_long}')
+            logging.info(f'Dataset: {dataset.name}, Training mode: {mode_long}')
             logging.info(f'Files: {save_path_train}, .. val, .. test')
 
     ''' Shuffle, limit length '''
@@ -229,12 +213,12 @@ if __name__ == '__main__':
         for p in [paths_train, paths_val, paths_test]:
             logging.info(p['label'].value_counts())
 
-    save_path_metadata = join(dataset_lists_dir, f'dataset_{dataset.name}_metadata_{training_mode_long}.json')
+    save_path_metadata = join(dataset_lists_dir, f'dataset_{dataset.name}_metadata_{mode_long}.json')
 
     # metadata
     metadata = {
         'dataset_name': dataset.name,
-        'training_mode': training_mode,
+        'training_mode': mode,
         'note': note,
         'num_classes': num_classes,
         'label_names': label_names,

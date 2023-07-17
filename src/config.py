@@ -14,11 +14,11 @@ HPARAMS = {
 
 seed_eval_default = 42
 
-sample_shape = (1, 3, 224, 224)  # TODO hardcoded input size [clean]
+sample_shape = (1, 3, 384, 384)  # TODO hardcoded input size [clean]
 
 # -----------------------
 # Explanations Evaluation
 # blurring CAM mask
-blur_cam_s = int(386 // 2)  # == 193; 386 is the size of the input image; = sigma in blur; odd number
+blur_cam_s = int(384 // 2) + 1  # == 193; 384 is the size of the input image; = sigma in blur; odd number
 # blurring input image
 blur_img_s = 29  # empirically found to drop prediction confidence below chance level; odd number

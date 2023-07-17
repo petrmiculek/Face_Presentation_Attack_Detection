@@ -60,8 +60,8 @@ if __name__ == '__main__':
     ''' Video and Image paths '''
     dir_imgs = args.input_path
     df = pd.read_pickle(join(dir_imgs, 'data.pkl'))
-    # os.makedirs(join(dir_imgs, 'fixed'))
-    # os.makedirs(join(dir_imgs, 'removed'))
+    os.makedirs(join(dir_imgs, 'fixed'))
+    os.makedirs(join(dir_imgs, 'removed'))
 
     ''' Face Alignment parameters '''
     scale = 3.25

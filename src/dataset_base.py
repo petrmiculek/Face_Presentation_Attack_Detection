@@ -5,7 +5,7 @@ from os.path import join, exists, basename
 from PIL import Image
 
 from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import ToTensor, Compose, Resize, Normalize, ConvertImageDtype, ToPILImage
+from torchvision.transforms import ToTensor, Compose
 import pandas as pd
 import torch
 import random
@@ -16,20 +16,17 @@ import numpy as np
 # -
 
 class BaseDataset(Dataset):
-    def __init__(self, annotations, path_prefix=None, transform=None):
+    def __init__(self, annotations, transform=None):
         self.transform = transform
         self.samples = annotations
 
-        # add path prefix (run-time)
-        # if path_prefix is not None:
-        #     self.samples['path'] = self.samples['path'].apply(lambda x: join(path_prefix, x))
-
-        # test first file exists
+        ''' Check that first file exists '''
         sample = self.samples.iloc[0]
         path = sample['path']
         if not exists(path):
             raise FileNotFoundError(f'Sample dataset file does not exist: {path} ')
 
+        ''' Filter out non-existing files '''
         paths_existing = self.samples['path'].apply(lambda x: exists(x))
         self.samples = self.samples[paths_existing]
         print(f'kept {len(self.samples)} samples out of {len(paths_existing)}')
@@ -40,16 +37,16 @@ class BaseDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.samples.iloc[idx]
         image = Image.open(sample['path'])
+        # image_orig = ToTensor()(image.copy())
         if self.transform:
             image = self.transform(image)
 
-        sample_dict = {
-            'image': image,
-            'label': sample['label'],
-            'path': sample['path'],
-            'idx': sample['idx']
-        }
-
+        sample_dict = {'image': image,
+                       'label': sample['label'],
+                       'path': sample['path'],
+                       'idx': sample['idx'],
+                       # 'image_orig': image_orig
+                       }
         return sample_dict
 
 
@@ -81,80 +78,62 @@ def StandardLoader(dataset_class, annotations, **kwargs):
             worker_seed = seed + worker_id
             np.random.seed(worker_seed)
             random.seed(worker_seed)
-            # is torch seed set automatically? TODO check
+            # torch seed set automatically
 
-    kwargs_dataset = {
-        'num_workers': num_workers,
-        'batch_size': batch_size,
-        'pin_memory': True,
-        'drop_last': drop_last,
-        'worker_init_fn': seed_worker,
-        'shuffle': shuffle,
-    }
-
-    # this did not work
-    # if seed is not None:
-    #     g = torch.Generator()
-    #     g.manual_seed(seed)
-    #     kwargs_dataset['generator'] = g
+    kwargs_dataset = {'num_workers': num_workers,
+                      'batch_size': batch_size,
+                      'pin_memory': True,
+                      'drop_last': drop_last,
+                      'worker_init_fn': seed_worker,
+                      'shuffle': shuffle}
 
     kwargs_dataset.update(kwargs)
-
     if transform is None:
-        transform = Compose([  # TODO delete unused code [clean]
-            ToTensor(),  # transforms.PILToTensor(),
-        ])
-
+        transform = Compose([ToTensor()])
     dataset = dataset_class(annotations, transform=transform)
     loader = DataLoader(dataset, **kwargs_dataset)
 
     return loader
 
 
-def pick_dataset_version(name, mode, attack=None):
+def pick_dataset_version(name, mode, attack=None, note=None):
     """
     Pick dataset version.
 
     note: `available` is updated, as `datasets` is filtered.
     ^ Don't try to simplify the code by reusing `available` many times.
-
     :param name: dataset name
     :param mode: training mode
     :param attack: attack number
+    :param note: note
     :return: metadata pandas series
     """
     path_datasets_csv = join('dataset_lists', 'datasets.csv')  # todo make into a parameter [clean]
     datasets = pd.read_csv(path_datasets_csv)
-    available = datasets[['dataset_name', 'training_mode']].values
-
-    # filter by name
-    datasets = datasets[datasets['dataset_name'] == name]
-    if len(datasets) == 0:
-        raise ValueError(f'No dataset with name {name}. '
-                         f'Available datasets:\n{available}')
-
-    available = datasets[['dataset_name', 'training_mode']].values
-    # filter by training mode
-    datasets = datasets[datasets['training_mode'] == mode]
-    if len(datasets) == 0:
-        raise ValueError(f'No dataset with name {name} and mode {mode}. '
-                         f'Available datasets:\n{available}')
-
     if attack is not None and mode == 'all_attacks':
         print(f'Ignoring attack number, training mode is: {mode}')
         attack = None
 
-    available = datasets[['dataset_name', 'training_mode', 'attack_test']].values
-    # filter by attack
-    if attack is not None:
-        datasets = datasets[datasets['attack_test'] == attack]
+    ''' Filter iteratively by each aspect '''
+    kv = {'dataset_name': name, 'training_mode': mode, 'attack_test': attack, 'note': note}
+    keys = []
+    info = ''
+    for k, v in kv.items():
+        if v is None:
+            continue
+        keys.append(k)
+        available = datasets[keys]
+        # filter by k
+        datasets = datasets[datasets[k] == v]
+        info += f'{k}={v}, '
         if len(datasets) == 0:
-            raise ValueError(f'No dataset with name {name}, mode {mode} and attack {attack}. '
+            raise ValueError(f'No dataset with: {info}. '
                              f'Available datasets:\n{available}')
 
-    elif len(datasets) > 1:
-        available = datasets[['dataset_name', 'training_mode', 'attack_test']].values
-        raise ValueError(f'Multiple datasets with name {name} and mode {mode}. '
+    ''' Require exactly one matched dataset '''
+    if len(datasets) > 1:
+        available = datasets[['dataset_name', 'training_mode', 'attack_test', 'note']].values
+        raise ValueError(f'Multiple datasets with {info}. '
                          f'Available datasets:\n{available}')
 
     return datasets.iloc[0]
@@ -291,3 +270,13 @@ def get_dataset_setup(dataset_module, training_mode):
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
     return label_names, label_names_binary, num_classes
+
+
+def split_dataset_name(name):
+    idx_split = name.find('-')
+    # handle case when no dot is found
+    if idx_split == -1:
+        return name, ''
+    dataset_name = name[:idx_split]
+    dataset_note = name[idx_split + 1:]
+    return dataset_name, dataset_note
