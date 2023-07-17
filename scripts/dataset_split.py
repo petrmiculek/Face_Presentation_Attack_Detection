@@ -12,10 +12,12 @@ import pandas as pd
 # add 'src' to the import path
 import sys
 
+
 sys.path.append('src')
 sys.path.extend([d for d in os.listdir() if os.path.isdir(d)])
 
 # local
+import config
 import dataset_rose_youtu
 import dataset_siwm
 from util import save_dict_json
@@ -28,11 +30,11 @@ logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=loggin
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--dataset', help='dataset in {rose_youtu, siwm}', type=str, required=True)
 parser.add_argument('-p', '--path', help='path to dataset top-level directory', type=str, required=True)
-# following (3) argument are for one_attack and unseen_attack modes
+parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
 parser.add_argument('-k', '--attack_test', help='attack type to test on in unseen/one_attack (1..(C-1))',
                     type=int, default=-1)
-parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str, required=True)
-parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
+parser.add_argument('-s', '--seed', help='random seed', type=int,
+                    default=None)  # shuffling, random attacks (both unused)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
 parser.add_argument('-c', '--comment', type=str, default='')
 
@@ -58,13 +60,15 @@ if __name__ == '__main__':
     """
     ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
-    seed = args.seed if args.seed else 42
     if args.no_log:
         print('Not saving anything, dry run')
 
     note = args.comment  # arbitrary extra info: dataset length limit, ...
     mode = args.mode
+    seed = args.seed if args.seed else 42
+    np.random.seed(seed)
 
+    ''' Choose dataset '''
     if args.dataset == 'rose_youtu':
         dataset = dataset_rose_youtu
     elif args.dataset == 'siwm':
@@ -72,8 +76,7 @@ if __name__ == '__main__':
     else:
         raise ValueError('dataset must be in {rose_youtu, siwm}')
 
-    bona_fide = 0  # todo does not apply for siwm, also read this from dataset [func] [warn]
-
+    ''' Choose training mode '''
     if mode == 'all_attacks':
         label_names = dataset.label_names_unified
         num_classes = len(dataset.labels_unified)
@@ -86,24 +89,28 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown training mode: {mode}')
 
-    np.random.seed(seed)
+    if mode in ['one_attack', 'unseen_attack']:
+        if args.attack_test not in dataset.attack_nums_unified:
+            raise ValueError(f'Attack test must be in {dataset.attack_nums_unified}')
+
     ''' Read annotations (paths to samples + labels) '''
     paths = dataset.preprocess_annotations(args.path)
 
+    ''' Person IDs to split by '''
     id_key = 'id2'
     paths[id_key] = paths[id_key].astype(int)
     person_ids = pd.unique(paths[id_key])
-
-    ''' Split by person ids '''
     # IDs 1, 8, 19 are missing in the provided dataset
     train_ids = np.array([2, 3, 4, 5, 6, 7, 9, 10, 11])
     val_ids = np.array([12])
     test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
 
-    ''' Split dataset according to training mode '''
+    ''' Attacks to split by '''
+    bona_fide = dataset.bona_fide  # todo check siwm, not 0 there [warn]
     label_nums = dataset.label_nums_unified
     attack_nums = dataset.attack_nums_unified
 
+    ''' Split dataset according to training mode '''
     if mode == 'all_attacks':
         ''' Train on all attacks, test on all attacks '''
         # note: train_ids, val_ids, test_ids -- everything as a list
@@ -122,23 +129,23 @@ if __name__ == '__main__':
         paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
-        class_test = class_val = class_train = args.attack_test
+        class_test = class_val = args.attack_test
+        class_train = [class_test]
 
         # split train/val/test (based on attack type and person IDs)
-        paths_train = paths[paths['label_unif'].isin([bona_fide, class_train])
+        paths_train = paths[paths['label_unif'].isin([bona_fide, *class_train])
                             & paths[id_key].isin(train_ids)]
         paths_val = paths[paths['label_unif'].isin([bona_fide, class_val])
-                          & paths[id_key].isin([val_ids])]
+                          & paths[id_key].isin(val_ids)]
         paths_test = paths[paths['label_unif'].isin([bona_fide, class_test])
-                           & paths[id_key].isin([test_ids])]
+                           & paths[id_key].isin(test_ids)]
 
     elif mode == 'unseen_attack':
         ''' Train on all attacks except one, test on the unseen attack '''
         paths['label'] = paths['label_bin']  # 0,1
 
         # attack-splitting
-        class_test = args.attack_test
-        class_val = class_test
+        class_test = class_val = args.attack_test
         class_train = np.setdiff1d(attack_nums, [class_test])
 
         # split train/val/test (based on attack type and person IDs)
@@ -151,7 +158,7 @@ if __name__ == '__main__':
     else:
         raise ValueError(f'Unknown training mode: {mode}')
 
-    ''' Safety check '''
+    ''' Safety checks '''
     unique_classes = pd.concat([paths_train, paths_val, paths_test])['label'].nunique()
     if not unique_classes == num_classes:
         # will scream for RoseYoutu (no `other` class), but that's OK
@@ -160,23 +167,25 @@ if __name__ == '__main__':
 
     assert bona_fide not in [class_test, class_val, *class_train], \
         'bona_fide label used as an attack label'
-    # TODO check for string x int comparisons [warn]
 
+    assert all(len(p) > 0 for p in [paths_train, paths_val, paths_test]), \
+        'Empty split'
+
+    ''' Set up directories and filenames '''
     mode_long = mode
     if mode in ['unseen_attack', 'one_attack']:
         mode_long += f'_{class_test}'
 
     if True:
-        ''' Set up directories and filenames '''
-        dataset_lists_dir = 'dataset_lists'
-        if not os.path.isdir(dataset_lists_dir) and not args.no_log:
-            logging.info(f'Creating dir: {dataset_lists_dir}')
-            os.makedirs(dataset_lists_dir)
+        lists_dir = config.dataset_lists_dir
+        if not os.path.isdir(lists_dir) and not args.no_log:
+            logging.info(f'Creating dir: {lists_dir}')
+            os.makedirs(lists_dir)
 
-        logging.info(f'Writing to dir: {dataset_lists_dir}')
-        save_path_train = join(dataset_lists_dir, f'dataset_{dataset.name}_train_{mode_long}.csv')
-        save_path_val = join(dataset_lists_dir, f'dataset_{dataset.name}_val_{mode_long}.csv')
-        save_path_test = join(dataset_lists_dir, f'dataset_{dataset.name}_test_{mode_long}.csv')
+        logging.info(f'Writing to dir: {lists_dir}')
+        save_path_train = join(lists_dir, f'dataset_{dataset.name}_train_{mode_long}.csv')
+        save_path_val = join(lists_dir, f'dataset_{dataset.name}_val_{mode_long}.csv')
+        save_path_test = join(lists_dir, f'dataset_{dataset.name}_test_{mode_long}.csv')
 
         # quit if files already exist
         if isfile(save_path_train) or isfile(save_path_val) or isfile(save_path_test):
@@ -192,7 +201,7 @@ if __name__ == '__main__':
             logging.info(f'Files: {save_path_train}, .. val, .. test')
 
     ''' Shuffle, limit length '''
-    # shuffling is done during dataset loading, not creation
+    # unused, shuffling is done during dataset loading, not creation
     if False:
         # shuffle order - useful when limiting dataset size to keep classes balanced
         paths_train = paths_train.sample(frac=1, random_state=seed).reset_index(drop=True)
@@ -213,7 +222,7 @@ if __name__ == '__main__':
         for p in [paths_train, paths_val, paths_test]:
             logging.info(p['label'].value_counts())
 
-    save_path_metadata = join(dataset_lists_dir, f'dataset_{dataset.name}_metadata_{mode_long}.json')
+    save_path_metadata = join(lists_dir, f'dataset_{dataset.name}_metadata_{mode_long}.json')
 
     # metadata
     metadata = {
@@ -268,9 +277,6 @@ if __name__ == '__main__':
 
     print('Metadata:\n', metadata)
 
-    # make csv out of metadata
-    path_datasets_csv = join(dataset_lists_dir, 'datasets.csv')
-
     # make metadata dataframe-serializable (list to str)
     for key in metadata:
         if isinstance(metadata[key], np.ndarray):
@@ -281,6 +287,8 @@ if __name__ == '__main__':
     # convert metadata to dataframe, one row only, dictionary keys as columns
     df = pd.DataFrame(metadata, index=[0])
 
+    # make csv out of metadata
+    path_datasets_csv = config.path_datasets_csv
     if not args.no_log:
         # append to csv
         if not isfile(path_datasets_csv):

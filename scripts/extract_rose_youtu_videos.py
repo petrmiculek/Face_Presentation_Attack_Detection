@@ -4,6 +4,7 @@ Extracting faces from RoseYoutu dataset videos.
 MTCNN Face Detection
 Affine transformation for landmark alignment
 Image Quality check (Laplacian variance)
+Re-predict MTCNN on cropped
 
 Batched MTCNN Predictions for speedup
 """

@@ -1,5 +1,6 @@
 training_run_id = None  # initialized from train.py
 
+# default training hyperparameters
 HPARAMS = {
     'epochs': 1,
     'batch_size': 2,
@@ -14,7 +15,7 @@ HPARAMS = {
 
 seed_eval_default = 42
 
-sample_shape = (1, 3, 384, 384)  # TODO hardcoded input size [clean]
+sample_shape = (1, 3, 384, 384)
 
 # -----------------------
 # Explanations Evaluation
@@ -22,3 +23,12 @@ sample_shape = (1, 3, 384, 384)  # TODO hardcoded input size [clean]
 blur_cam_s = int(384 // 2) + 1  # == 193; 384 is the size of the input image; = sigma in blur; odd number
 # blurring input image
 blur_img_s = 29  # empirically found to drop prediction confidence below chance level; odd number
+
+# -----------------------
+# Paths
+# -----------------------
+from os.path import join
+
+dataset_lists_dir = 'dataset_lists'  # directory for dataset lists (annotations and paths)
+path_datasets_csv = join(dataset_lists_dir, 'datasets.csv')  # list of datasets
+runs_dir = 'runs'  # directory for saving models, logs, etc.

@@ -49,7 +49,7 @@ parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, ru
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=None)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=None)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', default=None)
-parser.add_argument('-k', '--attack', help='test attack for unseen_attack/one_attack', type=int, default=None)
+parser.add_argument('-k', '--attack', help='test attack for unseen_attack/one_attack (1..C)', type=str, default=None)
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 # explain interplay of dataset and path
@@ -132,7 +132,7 @@ if __name__ == '__main__':
 
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
-    run_dir = args.run
+    run_dir = join(config.runs_dir, args.run)
     ''' Load run setup/configuration '''
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
@@ -147,17 +147,15 @@ if __name__ == '__main__':
     seed = args.seed if args.seed is not None else config.seed_eval_default
     init_seed(seed)
     ''' Model '''
-    model, preprocess = load_model_eval(config_dict['model_name'], config_dict['num_classes'], run_dir, device)
-    print(f'Model: {config_dict["model_name"]} with {config_dict["num_classes"]} classes')
+    model_name = config_dict['model_name'] if 'model_name' in config_dict else config_dict['arch']
+    model, preprocess = load_model_eval(model_name, config_dict['num_classes'], run_dir, device)
+    print(f'Model: {model_name} with {config_dict["num_classes"]} classes')
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
     ''' Dataset '''
-    dataset_name = args.dataset  # 'rose_youtu-single'
-    dataset_name, dataset_note = split_dataset_name(dataset_name)
-    dataset_module = get_dataset_module(dataset_name)
-    dataset_meta = pick_dataset_version(dataset_name, training_mode, note=dataset_note)
+    dataset_module = get_dataset_module(args.dataset)
+    dataset_meta = pick_dataset_version(args.dataset, training_mode, attack=args.attack)
     attack_test = args.attack if args.attack else dataset_meta['attack_test']  # unseen/one-attack
-    dataset_id = f'{dataset_name}-{dataset_note}-{training_mode}'
-    dataset_id += f'-{attack_test}' if attack_test else ''
+    dataset_id = f'{args.dataset}-{training_mode}' + f'-{attack_test}' if attack_test else ''
     loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
                      'seed': seed, 'drop_last': False,
                      'transform_train': preprocess['eval'], 'transform_eval': preprocess['eval']}
@@ -272,10 +270,10 @@ if __name__ == '__main__':
         labels = torch.cat(labels).numpy()
         idxs = torch.cat(idxs).numpy()
         paths = np.concatenate(paths)
-        preds = np.array(preds)
+        preds = np.array(preds)  # todo maybe concatenate instead?
         idxs = np.array(idxs)
 
-        np.savez(join(lime_dir, 'lime.npz'), labels=labels, paths=paths, preds=preds, idxs=idxs)
+        np.savez(join(lime_dir, 'lime.npz'), labels=labels, paths=paths, preds=preds, idxs=idxs)  # todo pandas
         print(f'LIME explanations saved to {lime_dir}')
 
     ''' Evaluation '''
@@ -312,7 +310,6 @@ if __name__ == '__main__':
             - per-class  #done#
             - how to normalize
         Baselines:
-        - blur image instead of black  #done#
         - random weights
         - sobel explanation  #done#
         - centered circle explanation  #done#
@@ -403,7 +400,7 @@ if __name__ == '__main__':
                             mask = torch.Tensor(cam_blurred < th).to(device)
                             img_masked = (img * mask + (1 - mask) * baseline)[None, ...]
                             # img_masked_plotting = img_plotting * mask.cpu().numpy()
-                            imgs_perturbed.append(img_masked)
+                            imgs_perturbed.append(img_masked.to(dtype=torch.float32))
 
                         ''' Predict on perturbed image '''
                         preds_perturbed_b, _ = predict(model, torch.cat(imgs_perturbed, dim=0))

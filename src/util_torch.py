@@ -185,6 +185,7 @@ def get_dataset_module(dataset_name):
     Name-based match for the .py module, specific split is defined later.
     Placing the code here is a workaround to avoid circular imports.
     """
+    dataset_name = dataset_name.split('-')[0]  # ignore suffix after '-' (e.g. 'rose_youtu-full')
     if dataset_name == 'rose_youtu':
         import dataset_rose_youtu as dataset_module
     elif dataset_name == 'siwm':

@@ -36,7 +36,7 @@ import config
 from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, keys_append, save_dict_json, update_config
 from util_torch import EarlyStopping, load_model, get_dataset_module, count_parameters
-from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup
+from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, split_dataset_name
 from util_torch import init_device, init_seed
 
 ''' Global variables '''
@@ -54,7 +54,7 @@ parser.add_argument('-t', '--limit', help='limit dataset size', type=int, defaul
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
 parser.add_argument('-m', '--mode', help='unseen_attack, one_attack, all_attacks (see Readme)', type=str,
                     default='all_attacks')
-parser.add_argument('-k', '--attack', help='attack for unseen_attack and one_attack modes (1-N)', type=str,
+parser.add_argument('-k', '--attack', help='attack for unseen_attack and one_attack modes  (1..C)', type=str,
                     default=None)  # falsy default value: also ''
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
@@ -66,6 +66,7 @@ parser.description = 'Train a model on a dataset'
 if __name__ == '__main__':
     ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+    args.dataset, dataset_note = split_dataset_name(args.dataset)  # 'rose_youtu-single' -> 'rose_youtu', 'single'
     args_dict = get_dict(args)
     update_config(args_dict, global_vars=False, hparams=True)
 
@@ -101,7 +102,7 @@ if __name__ == '__main__':
             outputs_dir = None
             checkpoint_path = None
         else:
-            outputs_dir = join('runs', run_name)
+            outputs_dir = join(config.runs_dir, run_name)
             os.makedirs(outputs_dir, exist_ok=True)
             checkpoint_path = join(outputs_dir, f'model_checkpoint.pt')
 
@@ -142,8 +143,7 @@ if __name__ == '__main__':
 
     ''' Dataset '''
     if True:
-        dataset_meta = pick_dataset_version(args.dataset, args.mode, attack=args.attack)
-
+        dataset_meta = pick_dataset_version(args.dataset, args.mode, attack=args.attack, note=dataset_note)
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
@@ -355,32 +355,30 @@ if __name__ == '__main__':
 
     ''' Confusion matrix '''
     if args.mode == 'one_attack':
-        attack_train_name = attack_train  # dataset_module.label_names_unified[attack_train]
-        attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
+        # attack_train_name = attack_train  # dataset_module.label_names_unified[attack_train]
+        # attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
-                       f'\ntrain: {attack_train_name}({attack_train}), ' \
-                       f'test:{attack_test_name}({attack_test})'
+                       f'\ntrain: {attack_train}, test: {attack_test}'
     elif args.mode == 'unseen_attack':
-        attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
+        # attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
-                       f'\ntrain: all but test, ' \
-                       f'test:{attack_test_name}({attack_test})'
+                       f'\ntrain: all but test, test: {attack_test}'
     else:  # args.mode == 'all_attacks':
         title_suffix = 'Test' \
-                       '\ntrain: all, ' \
-                       'test: all'
+                       '\ntrain: all, test: all'
 
-    cm_path = join(outputs_dir, 'confusion_matrix' + '.pdf') if not args.no_log else None
+    cm_path = join(outputs_dir, 'confmat_test' + '.pdf') if not args.no_log else None
     confusion_matrix(labels_test, preds_test, labels=label_names,
                      normalize=False, title_suffix=title_suffix,
                      output_location=cm_path, show=show_plots)
 
     # binary confusion matrix
     if args.mode == 'all_attacks':
-        cm_binary_path = join(outputs_dir, 'confusion_matrix_binary' + '.pdf') if not args.no_log else None
+        cm_binary_path = join(outputs_dir, 'confmat_binary_test' + '.pdf') if not args.no_log else None
         confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
                          normalize=False, title_suffix=title_suffix,
                          output_location=cm_binary_path, show=show_plots)
+
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}
     print_dict(union_dict, 'All info dump')

@@ -13,7 +13,7 @@ import numpy as np
 
 
 # local
-# -
+import config
 
 class BaseDataset(Dataset):
     def __init__(self, annotations, transform=None):
@@ -96,6 +96,16 @@ def StandardLoader(dataset_class, annotations, **kwargs):
     return loader
 
 
+def split_dataset_name(name):
+    idx_split = name.find('-')
+    # handle case when no dot is found
+    if idx_split == -1:
+        return name, None
+    dataset_name = name[:idx_split]
+    dataset_note = name[idx_split + 1:]
+    return dataset_name, dataset_note
+
+
 def pick_dataset_version(name, mode, attack=None, note=None):
     """
     Pick dataset version.
@@ -105,14 +115,19 @@ def pick_dataset_version(name, mode, attack=None, note=None):
     :param name: dataset name
     :param mode: training mode
     :param attack: attack number
-    :param note: note
+    :param note: dataset variant (single sample, full dataset, etc.)
     :return: metadata pandas series
     """
-    path_datasets_csv = join('dataset_lists', 'datasets.csv')  # todo make into a parameter [clean]
-    datasets = pd.read_csv(path_datasets_csv)
+    if note is None:
+        name, note = split_dataset_name(name)
+
+    datasets = pd.read_csv(config.path_datasets_csv)
     if attack is not None and mode == 'all_attacks':
-        print(f'Ignoring attack number, training mode is: {mode}')
+        print(f'Ignoring attack number, training mode is: {mode}.')
         attack = None
+
+    if attack is None and mode in ['unseen_attack', 'one_attack']:
+        print(f'Warning: Picking dataset without an attack number.')
 
     ''' Filter iteratively by each aspect '''
     kv = {'dataset_name': name, 'training_mode': mode, 'attack_test': attack, 'note': note}
@@ -270,13 +285,3 @@ def get_dataset_setup(dataset_module, training_mode):
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
     return label_names, label_names_binary, num_classes
-
-
-def split_dataset_name(name):
-    idx_split = name.find('-')
-    # handle case when no dot is found
-    if idx_split == -1:
-        return name, ''
-    dataset_name = name[:idx_split]
-    dataset_note = name[idx_split + 1:]
-    return dataset_name, dataset_note

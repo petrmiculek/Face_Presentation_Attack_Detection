@@ -89,13 +89,13 @@ if [ -z "wont-run" ]; then
   # mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
   #/mnt/storage-brno2/home/petrmiculek/RoseYoutu-full
   singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
-  rsync -ah --progress ryi7.tar $SCRATCHDIR
+  rsync -ah --progress ry_images50_filtered.tar $SCRATCHDIR
   tar -xf ry_images50_filtered.tar --directory . --checkpoint=.10000
-#  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 1 -w 2 -l 0.00001
-  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 2 -a efficientnet_v2_s
-  python3 src/train.py -p $SCRATCHDIR/rose_youtu_imgs -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 3 -a efficientnet_v2_s
-  
-    python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 32 -w 4 -l 0.00001 -m all_attacks -a efficientnet_v2_s
+#  python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 1 -w 2 -l 0.00001
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 1 -a efficientnet_v2_s
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 8 -w 1 -l 0.00001 -m unseen_attack -k 1 -a efficientnet_v2_s
 
-python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m all_attacks -c full
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 8 -w 1 -l 0.00001 -m unseen_attack -k 3
+
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m all_attacks -c full
 fi
