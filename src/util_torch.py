@@ -9,10 +9,12 @@ from prettytable import PrettyTable
 from torch.nn import functional as F
 from torchvision.models import ResNet18_Weights
 from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
+from tqdm import tqdm
 
 # local
-from src.resnet18 import resnet18
-from src.augmentation import ClassificationPresetTrain, ClassificationPresetEval
+from metrics import compute_metrics
+from resnet18 import resnet18
+from augmentation import ClassificationPresetTrain, ClassificationPresetEval
 
 
 def change_relu_resnet(model):
@@ -62,9 +64,8 @@ def change_silu_efficientnet(model):
     return model
 
 
-def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
+def load_model(model_name, num_classes, freeze_backbone=False):
     """ Load model, replace classification head, maybe freeze backbone. """
-    # todo seed is not used [func]
     if model_name == 'resnet18':
         # load model with pretrained weights
         weights = ResNet18_Weights.IMAGENET1K_V1
@@ -103,6 +104,7 @@ def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
         if inplace_c > 0:
             print(f'Disabled inplace operations for {inplace_c} modules')
 
+    ''' Freeze backbone parameters '''
     if freeze_backbone:
         layer_to_unfreeze = ''
         if model_name == 'resnet18':
@@ -110,14 +112,13 @@ def load_model(model_name, num_classes, seed=None, freeze_backbone=False):
         elif model_name == 'efficientnet_v2_s':
             layer_to_unfreeze = 'classifier'  # or features.7
 
-        print('Note: Currently not freezing any layers')
+        # print('Note: Currently not freezing any layers')
         for name, param in model.named_parameters():
             if layer_to_unfreeze not in name:
-                # param.requires_grad = False
-                pass
+                param.requires_grad = False
             else:
                 param.requires_grad = True
-            # print(name, param.requires_grad)
+            print(name, param.requires_grad)
 
     ''' Preprocessing and Augmentations '''
     crop_size = transforms_orig.crop_size[0]
@@ -222,12 +223,38 @@ def count_parameters(model, sum_only=False):
 
 
 def predict(model, inputs):
-    """ Predict on batch, return Numpy preds and classes. """
+    """ Predict on batch, return Numpy softmax probabilities and classes. """
     with torch.no_grad():
         preds_raw = model(inputs)
         probs = F.softmax(preds_raw, dim=1).cpu().numpy()
         classes = np.argmax(probs, axis=1)
     return probs, classes
+
+
+def eval_loop(model, loader, criterion, device, desc='Eval'):
+    """ Evaluate model on dataset. """
+    len_loader = len(loader)
+    ep_loss = 0.0
+    preds, labels, paths = [], [], []
+    with torch.no_grad():
+        pbar = tqdm(loader, mininterval=1., desc=desc)
+        for sample in pbar:
+            img, label = sample['image'], sample['label']
+            labels.append(label)
+            paths.append(sample['path'])
+            img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
+            out = model(img)
+            loss = criterion(out, label)
+            ep_loss += loss.item()
+            prediction_hard = torch.argmax(out, dim=1).cpu().numpy()
+            preds.append(prediction_hard)
+            pbar.set_postfix(loss=f'{loss:.4f}', refresh=False)
+
+    ep_loss /= len_loader  # loss is averaged over batch already, divide by number of batches
+    preds = np.concatenate(preds)
+    labels = np.concatenate(labels)
+    paths = np.concatenate(paths)
+    return paths, labels, preds, ep_loss
 
 
 """

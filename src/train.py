@@ -37,7 +37,7 @@ from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, keys_append, save_dict_json, update_config
 from util_torch import EarlyStopping, load_model, get_dataset_module, count_parameters
 from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, split_dataset_name
-from util_torch import init_device, init_seed
+from util_torch import init_device, init_seed, eval_loop
 
 ''' Global variables '''
 # -
@@ -49,6 +49,7 @@ parser.add_argument('-d', '--dataset', help='dataset to train on', type=str, def
 parser.add_argument('-a', '--arch', help='model architecture', type=str, default='resnet18')  # efficientnet_v2_s
 parser.add_argument('-b', '--batch_size', help='batch size', type=int, default=config.HPARAMS['batch_size'])
 parser.add_argument('-e', '--epochs', help='number of epochs', type=int, default=config.HPARAMS['epochs'])
+parser.add_argument('-f', '--freeze', help='freeze backbone', action='store_true')
 parser.add_argument('-l', '--lr', help='learning rate', type=float, default=config.HPARAMS['lr'])
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=-1)
 parser.add_argument('-w', '--num_workers', help='number of workers', type=int, default=0)
@@ -125,7 +126,7 @@ if __name__ == '__main__':
     ''' Model '''
     if True:
         model_name = args.arch
-        model, preprocess = load_model(model_name, num_classes, seed=seed, freeze_backbone=False)
+        model, preprocess = load_model(model_name, num_classes, freeze_backbone=args.freeze)
         model.to(device)
 
         ''' Model Setup '''
@@ -139,7 +140,7 @@ if __name__ == '__main__':
                                                                verbose=True)
         early_stopping = EarlyStopping(patience=config.HPARAMS['early_stopping_patience'],
                                        verbose=True, path=checkpoint_path)
-        scaler = GradScaler()  # mixed precision training
+        scaler = GradScaler()  # mixed precision training (16-bit)
 
     ''' Dataset '''
     if True:
@@ -197,38 +198,29 @@ if __name__ == '__main__':
         ep_train_loss = 0
         preds_train = []
         labels_train = []
-
         try:
-            with tqdm(train_loader, mininterval=1., desc=f'ep{epoch} train') as progress_bar:
-                for i, sample in enumerate(progress_bar, start=1):
-                    img, label = sample['image'], sample['label']
-                    img = img.to(device, non_blocking=True)
-                    label = label.to(device, non_blocking=True)
+            progress_bar = tqdm(train_loader, mininterval=1., desc=f'ep{epoch} train')
+            for i, sample in enumerate(progress_bar, start=1):
+                img, label = sample['image'], sample['label']
+                img = img.to(device, non_blocking=True)
+                label = label.to(device, non_blocking=True)
+                # forward pass
+                with autocast(device_type='cuda', dtype=torch.float16):
+                    out = model(img)  # prediction
+                    loss = criterion(out, label)
+                # backward pass
+                scaler.scale(loss).backward()
+                if i % grad_acc_steps == 0:  # gradient step with accumulated gradients
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
+                with torch.no_grad():  # save predictions
+                    ep_train_loss += loss.cpu().numpy()
+                    prediction_hard = torch.argmax(out, dim=1)
+                    labels_train.append(label.cpu().numpy())
+                    preds_train.append(prediction_hard.cpu().numpy())
 
-                    with autocast(device_type='cuda', dtype=torch.float16):
-                        # prediction
-                        out = model(img)
-                        loss = criterion(out, label)
-
-                    # backward pass
-                    scaler.scale(loss).backward()
-
-                    if i % grad_acc_steps == 0:
-                        scaler.step(optimizer)
-                        scaler.update()
-                        optimizer.zero_grad(set_to_none=True)
-
-                    with torch.no_grad():
-                        ep_train_loss += loss.cpu().numpy()
-
-                        # compute accuracy
-                        prediction_hard = torch.argmax(out, dim=1)
-
-                        # save predictions
-                        labels_train.append(label.cpu().numpy())
-                        preds_train.append(prediction_hard.cpu().numpy())
-
-                    progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
+                progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
             # end of training epoch loop
 
         except KeyboardInterrupt:
@@ -238,36 +230,12 @@ if __name__ == '__main__':
         # compute training metrics
         preds_train, labels_train = np.concatenate(preds_train), np.concatenate(labels_train)
         metrics_train = compute_metrics(labels_train, preds_train)
+        ep_train_loss /= len_train_loader
 
         ''' Validation loop '''
         model.eval()
-        ep_loss_val = 0.0
-        preds_val, labels_val = [], []
-        with torch.no_grad():
-            with tqdm(val_loader, leave=True, mininterval=1., desc=f'ep{epoch} val') as progress_bar:
-                for sample in progress_bar:
-                    img, label = sample['image'], sample['label']
-                    img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-                    out = model(img)
-                    loss = criterion(out, label)
-                    ep_loss_val += loss.cpu().numpy()
-
-                    # compute accuracy
-                    prediction_hard = torch.argmax(out, dim=1)
-
-                    # save prediction
-                    labels_val.append(label.cpu().numpy())
-                    preds_val.append(prediction_hard.cpu().numpy())
-
-                    progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
-        # end of validation loop
-
-        # loss is averaged over batch already, divide by batch number
-        ep_train_loss /= len_train_loader
-        ep_loss_val /= len_val_loader
-
+        _, labels_val, preds_val, ep_loss_val = eval_loop(model, val_loader, criterion, device, f'ep{epoch} val')
         metrics_val = compute_metrics(labels_val, preds_val)
-
         # log results
         res_epoch = {'Loss Training': ep_train_loss,
                      'Loss Validation': ep_loss_val,
@@ -307,35 +275,9 @@ if __name__ == '__main__':
 
     ''' Test set evaluation '''
     model.eval()
-    preds_test = []
-    labels_test = []
-    total_loss_test = 0
-    total_correct_test = 0
-    with torch.no_grad():
-        with tqdm(test_loader, leave=False, mininterval=1., desc=f'test') as progress_bar:
-            for sample in progress_bar:
-                img, label = sample['image'], sample['label']
-                img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-                out = model(img)
-                loss = criterion(out, label)
-                total_loss_test += loss.detach().cpu().numpy()
-
-                # compute accuracy
-                prediction_hard = torch.argmax(out, dim=1)
-                match = prediction_hard == label
-                total_correct_test += match.sum().detach().cpu().numpy()
-
-                # save predictions
-                labels_test.append(label.cpu().numpy())
-                preds_test.append(prediction_hard.cpu().numpy())
-
-                progress_bar.set_postfix(loss=f'{loss:.4f}', refresh=False)
-
-        loss_test = total_loss_test / len_test_loader
     # end of test loop
-
+    _, labels_test, preds_test, loss_test = eval_loop(model, test_loader, criterion, device)
     metrics_test = compute_metrics(labels_test, preds_test)
-
     ''' Log results '''
     print(f'\nLoss Test  : {loss_test:06.4f}')
     print(f'Accuracy Test: {metrics_test["Accuracy"]:06.4f}')
@@ -349,11 +291,7 @@ if __name__ == '__main__':
     metrics_test['epochs_trained'] = epochs_trained
     wb.log(metrics_test, step=epochs_trained)
 
-    ''' Plot results '''
-    preds_test = np.concatenate(preds_test)
-    labels_test = np.concatenate(labels_test)
-
-    ''' Confusion matrix '''
+    ''' Plot results - Confusion matrix '''
     if args.mode == 'one_attack':
         # attack_train_name = attack_train  # dataset_module.label_names_unified[attack_train]
         # attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]

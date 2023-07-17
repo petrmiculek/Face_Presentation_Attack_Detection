@@ -33,8 +33,8 @@ pil_logger.setLevel(logging.INFO)
 # local
 from metrics import compute_metrics, confusion_matrix
 from util import print_dict, save_i, keys_append
-from util_torch import init_device, init_seed, load_model_eval, get_dataset_module, predict
-from dataset_base import pick_dataset_version, load_dataset, split_dataset_name
+from util_torch import init_device, init_seed, load_model_eval, get_dataset_module, predict, eval_loop
+from dataset_base import pick_dataset_version, load_dataset
 import config
 
 ''' Global variables '''
@@ -63,31 +63,13 @@ parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
 parser.add_argument('-z', '--show', help='show outputs', action='store_true')
 
 
-def eval_loop(loader):
-    """ Evaluate model on dataset. """
-    len_loader = len(loader)
-    ep_loss = 0.0
-    preds, labels, paths = [], [], []
-    with torch.no_grad():
-        for sample in tqdm(loader, mininterval=1., desc='Eval'):
-            img, label = sample['image'], sample['label']
-            labels.append(label)
-            paths.append(sample['path'])
-            img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-            out = model(img)
-            loss = criterion(out, label)
-            ep_loss += loss.item()
-            prediction_hard = torch.argmax(out, dim=1).cpu().numpy()
-            preds.append(prediction_hard)
-
-    ep_loss /= len_loader  # loss is averaged over batch already, divide by number of batches
+def eval_loop_wrapper(loader):
+    global model, criterion, device
+    paths, labels, preds, loss = eval_loop(model, loader, criterion, device)
     metrics = compute_metrics(labels, preds)
     # log results
-    res_epoch = {'Loss': ep_loss,
+    res_epoch = {'Loss': loss,
                  'Accuracy': metrics['Accuracy']}
-    preds = np.concatenate(preds)
-    labels = np.concatenate(labels)
-    paths = np.concatenate(paths)
     predictions = pd.DataFrame({'path': paths, 'label': labels, 'pred': preds})
     return res_epoch, predictions
 
@@ -105,7 +87,7 @@ def get_preds(dataset_loader, split_name, output_dir, new=False, overwrite=False
     paths_save = join(output_dir, f'predictions_{split_name}.pkl')
     if new or not os.path.isfile(paths_save):
         print(f'Evaluating on: {split_name}')
-        res, predictions = eval_loop(dataset_loader)
+        res, predictions = eval_loop_wrapper(dataset_loader)
         print_dict(res)
         save_i(paths_save, predictions, overwrite=overwrite)
         predictions.to_pickle(paths_save, )
@@ -132,7 +114,7 @@ if __name__ == '__main__':
 
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
-    run_dir = join(config.runs_dir, args.run)
+    run_dir = args.run
     ''' Load run setup/configuration '''
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
@@ -175,10 +157,8 @@ if __name__ == '__main__':
         from lime import lime_image
         from skimage.segmentation import mark_boundaries
 
-
         def convert_for_lime(img):
             return (img.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-
 
         def predict_lime(images):
             """
@@ -202,7 +182,6 @@ if __name__ == '__main__':
             probs, _ = predict(model, img0)
             return probs
 
-
         def show_lime_image(explanation, img, lime_kwargs, title=None, show=False, output_path=None):
             """
             Show image with LIME explanation overlay
@@ -223,7 +202,6 @@ if __name__ == '__main__':
                 plt.savefig(output_path)
 
             plt.close()
-
 
         nums_to_names = dataset_module.nums_to_unified
         explainer = lime_image.LimeImageExplainer(random_state=seed)
@@ -447,7 +425,6 @@ if __name__ == '__main__':
         ''' Extract embeddings through forward hooks '''
         activation = {}
 
-
         def get_activation(name):
             """ Hook for extracting activations from a layer specified by name """
 
@@ -455,7 +432,6 @@ if __name__ == '__main__':
                 activation[name] = outputs.detach()
 
             return hook
-
 
         emb_layer = 'avgpool'  # resnet18
         # emb_layer = 'avgpool'  # efficientnet_v2_s
