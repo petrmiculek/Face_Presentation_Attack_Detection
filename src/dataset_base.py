@@ -154,7 +154,7 @@ def pick_dataset_version(name, mode, attack=None, note=None):
     return datasets.iloc[0]
 
 
-def load_annotations(metadata_row, seed, path_prefix=None, limit=-1, shuffle=False, quiet=True):
+def load_annotations(metadata_row, seed, path_prefix, limit=-1, shuffle=False, quiet=True):
     """ Load annotations from the dataset list metadata file. """
 
     def add_prefix(x):

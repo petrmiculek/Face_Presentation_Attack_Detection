@@ -5,7 +5,8 @@ import os
 import json
 import sys
 import time
-from os.path import join
+from os.path import join, exists
+from shutil import move
 
 # fix for local import problems
 sys.path.append(os.getcwd())  # + [d for d in os.listdir() if os.path.isdir(d)]
@@ -34,6 +35,7 @@ pil_logger.setLevel(logging.INFO)
 from metrics import compute_metrics, confusion_matrix
 from util import print_dict, save_i, keys_append
 from util_torch import init_device, init_seed, load_model_eval, get_dataset_module, predict, eval_loop
+from util_image import plot_many
 from dataset_base import pick_dataset_version, load_dataset
 import config
 
@@ -55,7 +57,7 @@ parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 # explain interplay of dataset and path
 parser.add_argument('-d', '--dataset', help='dataset to evaluate on', type=str, required=True)  # rose_youtu-single
 parser.add_argument('-p', '--path', help='path to dataset samples', type=str, required=True)
-parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
+parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', default=None)
 parser.add_argument('-l', '--lime', help='generate LIME outputs', action='store_true')
 parser.add_argument('-c', '--cam', help='generate CAM outputs', action='store_true')
 parser.add_argument('-v', '--eval', help='run evaluation loop', action='store_true')
@@ -293,36 +295,41 @@ if __name__ == '__main__':
         - centered circle explanation  #done#
         
         - check that percent_kept = 0 leads to black image  #done#
+        
+        format:
+         list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W], TODO finish }
         """
         from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
             LayerCAM  # todo check more methods in the library
         from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
-        from pytorch_grad_cam.metrics.cam_mult_image import CamMultImageConfidenceChange
         import cv2
-        from util_image import SobelFakeCAM, CircleFakeCAM, plot_many, normalize, deprocess
+        from util_image import SobelFakeCAM, CircleFakeCAM, deprocess
 
         cam_dir = join(output_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
-        target_layers = [model.features[-1][0]]  # [model.layer4[-1]]  # resnet18
+        target_layers = [model.features[-1][0]] if model_name == 'efficientnet_v2_s' else [model.layer4[-1].bn2]
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [SobelFakeCAM, CircleFakeCAM,
-                          GradCAM]  # ScoreCAM OOM, FullGrad too different; AblationCAM runs long
-        # methods_callables = [ for method in methods_]
-        # grad_cam = GradCAM(model=model, target_layers=target_layers, use_cuda=True)
+        method_modules = [HiResCAM] + [SobelFakeCAM, CircleFakeCAM, GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM,
+                                       EigenCAM]  # ScoreCAM OOM, FullGrad too different; AblationCAM runs long
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
         #           ^ minor visual difference from ClassifierOutputTarget.
         # cam_metric = CamMultImageConfidenceChange()  # DropInConfidence()
-        percentages_kept = [100, 90, 70, 50, 30, 10, 0]
-        perturbed_percentages_kept = percentages_kept[1:]  # 100% was the original, so skip it
 
-        cams_out = []  # list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W], TODO finish }
+        perturbed_percentages_kept = config.percentages_kept[1:]  # 100% was the original, so skip it
+
         for i_m, method_module in enumerate(method_modules):
+            cams_out = []
             cam_method = method_module(model=model, target_layers=target_layers, use_cuda=device.type == 'cuda')
             method_name = cam_method.__class__.__name__
             print(f'{method_name} ({i_m + 1}/{len(method_modules)})')
             if 'batch_size' in cam_method.__dict__:  # AblationCAM
                 print(f'Orig batch size for {method_name}: {cam_method.batch_size}')
                 cam_method.batch_size = 128  # default == 32; adan (8gb) can handle 128
+
+            # if False:
+            #     batch = next(iter(test_loader))
+            #     i = 1
+            #     img = img_batch[i]
 
             for batch in tqdm(test_loader, mininterval=2., desc=method_name):
                 ''' Predict (batch) '''
@@ -332,10 +339,10 @@ if __name__ == '__main__':
                 ''' Generate CAMs for images in batch '''
                 for i, img in enumerate(img_batch):
                     img_np = img.cpu().numpy()
-                    if 'image_orig' in batch:
-                        img_plotting = batch['image_orig'][i].cpu().numpy().transpose(1, 2, 0)
-                    else:
-                        img_plotting = deprocess(img_np)
+                    # if 'image_orig' in batch:
+                    #     img_plotting = batch['image_orig'][i].cpu().numpy().transpose(1, 2, 0)
+                    # else:
+                    #     img_plotting = deprocess(img_np)
                     pred = preds_b[i]
                     pred_class = preds_classes_b[i]
                     pred_class_name = label_names[pred_class]
@@ -358,19 +365,20 @@ if __name__ == '__main__':
 
                     ''' Perturbation baselines '''
                     b_black = np.zeros_like(cam_pred)
-                    b_blur = np.stack(
-                        [cv2.blur(img_np[c], (config.blur_img_s, config.blur_img_s)) for c in range(3)])
-                    b_mean = np.zeros_like(img_np) + np.mean(img_np, axis=(1, 2), keepdims=True)
-                    b_blurdark = (b_black + b_blur) / 4
-                    # plot_many(img_plotting, b_black, b_blur, b_mean, b_blurdark)
+                    # b_blur = np.stack(
+                    #     [cv2.blur(img_np[c], (config.blur_img_s, config.blur_img_s)) for c in range(3)])
+                    # b_mean = np.zeros_like(img_np) + np.mean(img_np, axis=(1, 2), keepdims=True)
+                    # b_blurdark = (b_black + b_blur) / 4
+                    # # plot_many(img_plotting, b_black, b_blur, b_mean, b_blurdark)
 
                     ''' Perturb explained region '''
                     cam_blurred = cam_pred + 1 / 10 * cv2.blur(cam_pred, (config.blur_cam_s, config.blur_cam_s))
                     thresholds = np.percentile(cam_blurred, perturbed_percentages_kept)
                     thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
 
-                    for base_name, baseline in zip(['black', 'blur', 'mean', 'blurdark'],
-                                                   [b_black, b_blur, b_mean, b_blurdark]):  # TODO try
+                    # for base_name, baseline in zip(['black', 'blur', 'mean', 'blurdark'],
+                    #                                [b_black, b_blur, b_mean, b_blurdark]):  # unused for main experiments
+                    for base_name, baseline in [('black', b_black)]:
                         baseline = torch.tensor(baseline, device=device)
                         scores_perturbed = [pred[pred_class]]  # [score of 100% kept (original)], skip in loop
                         imgs_perturbed = []
@@ -394,7 +402,7 @@ if __name__ == '__main__':
                                          'baseline': base_name,
                                          'label': label, 'pred': preds_classes_b[i],
                                          'del_scores': scores_perturbed, 'pred_scores': preds_b[i],
-                                         'percentages_kept': percentages_kept})
+                                         'percentages_kept': config.percentages_kept})
                     # end of batch
                 # end of dataset
             # end of method
@@ -402,10 +410,14 @@ if __name__ == '__main__':
             # free gpu memory
             # del cam_method
             # torch.cuda.empty_cache()
-        ''' Save CAMs per method '''
-        cams_df = pd.DataFrame(cams_out)
-        output_path = join(cam_dir, f'cams_{method_name}_{limit if limit else "full"}.pkl.gz')
-        cams_df.to_pickle(output_path, compression='gzip')
+            ''' Save CAMs per method '''
+            cams_df = pd.DataFrame(cams_out)
+            output_path = join(cam_dir, f'cams_{method_name}_{limit if limit else "full"}.pkl.gz')
+            if exists(output_path):  # rename old file
+                print(f'File {output_path} already exists, renaming it.')
+                # prepend 'old' to file name
+                move(output_path, output_path.replace('cams_', 'old-cams_'))
+            cams_df.to_pickle(output_path)
         # print('Not saving CAMs!')
         # end of all methods
 
@@ -421,7 +433,7 @@ if __name__ == '__main__':
         
         """
         # if not hasattr(model, 'fw_with_emb'):
-        #     raise AttributeError('Model does not have fw_with_emb method')  # currently only for resnet18
+        #     raise AttributeError('Model does not have fw_with_emb method')
         ''' Extract embeddings through forward hooks '''
         activation = {}
 
@@ -429,7 +441,7 @@ if __name__ == '__main__':
             """ Hook for extracting activations from a layer specified by name """
 
             def hook(model, inputs, outputs):
-                activation[name] = outputs.detach()
+                activation[name] = outputs.detach()  # refers to outer-scope `activation` dict
 
             return hook
 
@@ -445,7 +457,7 @@ if __name__ == '__main__':
         labels = []
         paths = []
         features = []
-        # todo: this could be unified with the eval_loop, just add the fw_hook there and save its output [clean]
+        # todo: to eval_loop - add fw_hook, save avgpools [clean]
         with torch.no_grad():
             for sample in tqdm(test_loader, mininterval=1., desc='Embeddings'):
                 img, label = sample['image'], sample['label']
@@ -470,18 +482,13 @@ if __name__ == '__main__':
         paths = np.concatenate(paths)
         avgpools = np.concatenate(avgpools)[..., 0, 0]  # strip last 2 dimensions (N, C, 1, 1)
         # features = np.concatenate(features)
-
         embeddings_hook.remove()
-
         # save avgpools embeddings to file
         split = 'test'
         np.save(join(output_dir, f'embeddings_{split}.npy'), avgpools)
-
         # loss is averaged over batch already, divide by number of batches
         ep_loss /= len_loader
-
         metrics = compute_metrics(labels, preds)
-
         features = avgpools  # using the forward hooks, not fw_with_emb
 
         # embeddings distance matrix
@@ -503,7 +510,8 @@ if __name__ == '__main__':
     print(f'Execution finished in {t1 - t0:.2f}s')  # since dataset loaded
 
     ''' Sandbox Area'''
-    if args.cam:
+    if False and args.cam:
+        cams_df = None
         # plot deletion scores per-baseline
         baselines = cams_df.baseline.unique()
         xs = cams_df.percentages_kept.iloc[0]

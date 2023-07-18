@@ -18,7 +18,8 @@ import os
 import json
 import sys
 import time
-from os.path import join
+from glob import glob
+from os.path import join, basename, isfile, dirname
 import warnings
 
 from dataset_base import show_labels_distribution
@@ -39,8 +40,12 @@ import torch
 import matplotlib
 import seaborn as sns
 
-matplotlib.use('module://backend_interagg')  # default backend for Pycharm
-# matplotlib.use('tkagg')  # works in console
+if "PYCHARM_HOSTED" in os.environ:
+    matplotlib.use('module://backend_interagg')  # default backend for Pycharm
+elif "SCRATCHDIR" in os.environ:
+    pass
+else:
+    matplotlib.use('tkagg')  # works in console
 import matplotlib.pyplot as plt
 
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -59,6 +64,8 @@ nums_to_names = None
 label_names = None
 # show_plots = False
 args = None
+cam_dir = None
+ext = 'png'  # extension for saving plots
 
 parser = argparse.ArgumentParser()  # description='Process CAMs'
 parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
@@ -66,11 +73,12 @@ parser.add_argument('-z', '--show', help='show outputs', action='store_true')
 parser.add_argument('-s', '--seed', help='random seed', type=int, default=None)
 parser.add_argument('-t', '--limit', help='limit dataset size', type=int, default=None)
 parser.add_argument('-n', '--no_log', help='do not save anything', action='store_true')
-parser.add_argument('-p', '--path_prefix', help='path to dataset', type=str, default=None)
+parser.add_argument('-p', '--path_prefix', help='path to dataset')
+parser.add_argument('-f', '--files', help='path(s) to CAMs', type=str, nargs='+')
 
 
 def read_cams(path):
-    """ Read cams.pkl.gz DataFrame/s. """
+    """ Read pickled CAM DataFrame/s. """
     df_ = None
     if isinstance(path, str):
         df_ = pd.read_pickle(path)
@@ -80,8 +88,9 @@ def read_cams(path):
         for p in path:
             df_tmp = pd.read_pickle(p)
             lens.append(len(df_tmp))
-            source = p.split('/')[-1]
-            df_tmp['file'] = source
+            source = basename(p)
+            df_tmp['path'] = df_tmp['path'].apply(basename)  # todo verify
+            df_tmp['source'] = source
             print(f'Loading {source}, shape: {df_tmp.shape}')
             if df_ is None:
                 df_ = df_tmp
@@ -93,7 +102,7 @@ def read_cams(path):
             ''' Check for conflicting attributes - label, pred '''
             conflicting = (intersection['label_x'] != intersection['label_y']) | \
                           (intersection['pred_x'] != intersection['pred_y'])
-            if conflicting.any():
+            if any(conflicting):
                 print(f'Warning: {source} and {intersection["file"].iloc[0]} have conflicting labels/preds')
 
             df_ = pd.concat([df_, df_tmp], ignore_index=True)
@@ -103,22 +112,14 @@ def read_cams(path):
     return df_
 
 
-def fix_path_prefixes(df_, replace_with='../'):
-    """ Fix path prefixes in dataframe. """
-    s = df_.iloc[0]['path']
-    # drop everything before 'data/client/' (but not including)
-    first_kept = 'data/client/'
-    find = s.find(first_kept)
-    df_['path'] = df_['path'].apply(lambda x: replace_with + x[find:])
-    return df_
-
-
 def plot1x5(cams, title='', output_path=None):
     """Plot 5 CAMs in a row."""
     if True:
         fig, axs = plt.subplots(1, 5, figsize=(16, 4), sharex=True)
         for jc, ax in zip(enumerate(cams), axs.flat):
             j, c = jc
+            if c.shape[0] == 1:
+                c = c[0]
             # plt.subplot(1, 5, j + 1)
             im = ax.imshow(c, vmin=0, vmax=255)
             # make sure the aspect ratio is correct
@@ -181,6 +182,7 @@ def plot5x5(cams, output_path=None):
 
     cams: Input matrix: [gt, pred, h, w]
     """
+    global label_names
     fig, axs = plt.subplots(5, 5, figsize=(12, 12))
     title = 'Average GradCAM Confusion Matrix'
     fig.suptitle(title, fontsize=16)
@@ -193,8 +195,10 @@ def plot5x5(cams, output_path=None):
             if j == 0:  # left-column
                 axs[i, j].set_ylabel(class_gt, rotation=90, labelpad=5, fontsize=12)
                 print(class_gt, end=' ')
-
-            axs[i, j].imshow(cams[i, j], vmin=0, vmax=255)
+            c = cams[i, j]
+            if c.shape[0] == 1:
+                c = c[0]
+            axs[i, j].imshow(c, vmin=0, vmax=255)
             axs[i, j].set_xticks([])
             axs[i, j].set_yticks([])
             # remove frame around image
@@ -214,6 +218,38 @@ def plot5x5(cams, output_path=None):
     plt.close(fig)
 
 
+def deletion_per_image(df):
+    global args, cam_dir, ext
+    # x: perturbation level
+    # y: prediction drop
+    percentages_kept = df['percentages_kept'].values[0]  # assume same for all
+    y = df['del_scores'].values
+    idxs = df['idx'].values
+    plt.figure(figsize=(6, 4))
+    for i, scores_line in enumerate(y):
+        sample_idx = idxs[i]
+        marker_random = get_marker(sample_idx)
+        plt.plot(percentages_kept, scores_line, label=sample_idx, marker=marker_random)
+    plt.xticks(percentages_kept)  # original x-values ticks
+    plt.gca().invert_xaxis()  # decreasing x axis
+    plt.ylim(0, 1.05)
+    # plt.legend(title='Sample ID')  # too long for per-sample legend
+    plt.ylabel('Prediction Score')
+    plt.xlabel('Perturbation Intensity (% of image kept)')
+    plt.title('Deletion Metric')
+    # remove top and right spines
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    plt.tight_layout()
+    output_path = join(cam_dir, f'deletion_metric_samples.{ext}')
+    if output_path and not args.no_log:
+        plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
+    if args.show:
+        plt.show()
+    plt.close()
+    return percentages_kept
+
+
 # def main():
 if __name__ == '__main__':
     """
@@ -222,54 +258,68 @@ if __name__ == '__main__':
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
-    run_dir = args.run
-    cam_dir = join(run_dir, 'cam')
+
+    ''' Process paths and filenames '''
+    # paths like: 'runs/sage-cherry-91/eval-rose_youtu-single-all_attacks-all/cam/cams_SobelFakeCAM_20.pkl.gz'
+    if "PYCHARM_HOSTED" in os.environ:
+        # glob expand file argument
+        args.files = glob(args.files[0])
+
+    ''' Directories/paths '''
+    cam_dir = dirname(args.files[0])
+    path_list = args.files[0].split('/')  # assume common directory prefix for cam files
+    run_dir = join(*path_list[:2])  # rebuild runs/<run_name>
+
+    eval_dir = path_list[2]
+
+    # format to parse, hyphen-separated
+    # 'eval', dataset_name, dataset_note [, attack], mode, limit_
+    _, dataset_name, dataset_note, mode, *attack, limit_ = eval_dir.split('-')
+    attack = attack[0] if len(attack) == 1 else None
+
+    ''' Parse filenames '''
+    # filenames example: cams_EigenCAM_20.pkl.gz
+    # filenames pattern: cams_<method>_<limit>.pkl.gz
+
+    # read all limit strings from filenames
+    filenames = [basename(f) for f in args.files]
+    limits = [f.split('_')[2].split('.')[0] for f in filenames]
+    if len(set(limits)) != 1:
+        raise ValueError(f'Multiple different limits in filenames: {limits}')
+
+    methods = [f.split('_')[1] for f in filenames]
+    limit = -1 if limits[0] == 'all' else int(limits[0])
 
     ''' Load CAMs '''
-    method = 'GradCAM'
-    limit = -1
-    # cams_id = f'{method}_{limit}'
-    # path_cams = join(cam_dir, f'cams_{cams_id}.pkl.gz')
-    # df = pd.read_pickle(path_cams)
-
-    # loading maybe multiple files
-    methods = ['GradCAMPlusPlus', 'AblationCAM']  # 'GradCAM', 'HiResCAM',
-    cams_ids = [f'{method}_{limit}' for method in methods]
-    filenames = [f'cams_{cams_id}.pkl.gz' for cams_id in cams_ids]
-    paths = [join(cam_dir, f) for f in filenames]
-    df = read_cams(paths)
-    df = fix_path_prefixes(df)
+    df = read_cams(args.files)
 
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
-    os.makedirs(cam_dir, exist_ok=True)
     print('Loading model and setup from:', run_dir)
 
     ''' Arguments '''
-    training_mode = config_dict['mode']  # 'all_attacks'
-    dataset_name = config_dict['dataset']  # 'rose_youtu'
+    # training_mode = config_dict['mode']  # 'all_attacks'
+    # dataset_name = config_dict['dataset']  # 'rose_youtu'
     dataset_module = get_dataset_module(dataset_name)
 
     ''' Initialization '''
     seed = args.seed if args.seed is not None else config.seed_eval_default  # 42
     init_seed(seed)
-    limit = -1 if args.limit is None else args.limit
+
     # plotting params
-    # seaborn set style
-    sns.set_style('whitegrid')
+    sns.set_style('whitegrid')  # seaborn set style
 
     ''' Load Dataset '''
     if True:
         from dataset_base import pick_dataset_version, load_annotations
 
-        dataset_meta = pick_dataset_version(dataset_name, training_mode)
+        dataset_meta = pick_dataset_version(dataset_name, mode, attack, dataset_note)
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
-        split = 'test'
-        path_samples = args.path_prefix
-        dataset_paths = load_annotations(dataset_meta, seed, path_samples, limit)[split]
+        split = 'test'  # implicitly always working with unseen data
+        dataset_paths = load_annotations(dataset_meta, seed, args.path_prefix, limit)[split]
         ds = dataset_module.Dataset(dataset_paths)
         bona_fide = dataset_module.bona_fide
         label_names = dataset_module.label_names_unified
@@ -279,12 +329,25 @@ if __name__ == '__main__':
 
     t0 = time.perf_counter()
 
-    ####################################################################################################################
+    ###############################################################################
     ''' Exploring CAMs '''
     nums_to_names = dataset_module.nums_to_unified
     label_names = dataset_module.label_names_unified
     idxs = df['idx'].values
+
+    # -------------------------------------------- vvv
+    # temporary: shapes of CAMs
     cam_shape = df['cam'].values[0].shape
+    cam_shape = (5, 1, 7, 7)  # temporary
+    shp = lambda x: x.shape
+    df['shape'] = df.cam.apply(shp)
+    dg = df[['method', 'shape']].groupby('shape')
+    for g, rows in dg:
+        print(g, rows.method.value_counts())
+
+    df_orig = df.copy()
+    df = df[df['shape'] == (5, 1, 7, 7)]
+    # -------------------------------------------- ^^^
     print(f'CAM shape: {cam_shape}')
     cams = np.stack(df['cam'].values)
     labels = df['label'].values
@@ -292,43 +355,53 @@ if __name__ == '__main__':
     percentages_kept = df['percentages_kept'].values[0]  # assume same for all
     auc_percentages = np.array(percentages_kept) / 100  # normalize to [0, 1]
 
+    ''' Across-method correlation '''
+    if False:
+        # todo `df` was filtered down, fyi
+        from util_image import plot_many
+        from scipy.stats import pearsonr, spearmanr
+
+        # step 1: single sample
+        idx = df.iloc[0].idx
+        ds_idx = [sample['idx'] for sample in ds]
+        sample = ds[ds_idx.index(idx)]
+        img = sample['image']
+
+        # step 2: get all cams for this sample
+        df_sample = df[df.idx == idx]
+        methods = df_sample.method.values
+        cams = np.stack(df_sample.cam.values)
+        cams = cams[:, :, 0, ...]  # drop 1-channel dim  -- not generally applicable
+        cam1 = cams[0]
+        cam2 = cams[1]
+        # plot_many([img, cam1, cam2], titles=['img', methods[0], methods[1]])
+
+        for i, c in enumerate(label_names):
+            print(f'{i}: {c}')
+            c1 = cam1[i]
+            c2 = cam2[i]
+
+            # if constant (all 0), corrcoef = 0
+            if np.allclose(c1, 0) or np.allclose(c2, 0):
+                corr_pearson = 0
+                corr_spearman = 0
+            else:
+                corrcoef = np.corrcoef(c1.flatten(), c2.flatten())  # -> [2, 2]
+                corr_pearson = pearsonr(c1.flatten(), c2.flatten())
+                corr_spearman = spearmanr(c1.flatten(), c2.flatten())
+
+            print(f'{c}: p={corr_pearson:.3f} s={corr_spearman:.3f}')
+            plot_many([c1, c2], title=f'{c}: p={corr_pearson:.3f} s={corr_spearman:.3f}',
+                      titles=[methods[0], methods[1]])
+
+        """
+        .
+        """
+
     ''' Per-image Deletion Metric Plot'''
     if False:
-        """
-        Not used, since per-sample visualization is not practical for thousands of samples.
-        """
-
-        # x: perturbation level
-        # y: prediction drop
-        percentages_kept = df['percentages_kept'].values[0]  # assume same for all
-        y = df['del_scores'].values
-        idxs = df['idx'].values
-
-        plt.figure(figsize=(6, 4))
-        for i, scores_line in enumerate(y):
-            sample_idx = idxs[i]
-            marker_random = get_marker(sample_idx)
-            plt.plot(percentages_kept, scores_line, label=sample_idx, marker=marker_random)
-
-        plt.xticks(percentages_kept)  # original x-values ticks
-        plt.gca().invert_xaxis()  # decreasing x axis
-        plt.ylim(0, 1.05)
-        # plt.legend(title='Sample ID')  # too long for per-sample legend
-        plt.ylabel('Prediction Score')
-        plt.xlabel('Perturbation Intensity (% of image kept)')
-        plt.title('Deletion Metric')
-
-        # remove top and right spines
-        plt.gca().spines['top'].set_visible(False)
-        plt.gca().spines['right'].set_visible(False)
-
-        plt.tight_layout()
-        output_path = join(cam_dir, 'deletion_metric_samples.png')
-        if output_path and not args.no_log:
-            plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
-        if args.show:
-            plt.show()
-        plt.close()
+        # Not used, since per-sample visualization is not practical for thousands of samples.
+        percentages_kept = deletion_per_image(df)
 
     ''' Per-Method Deletion Metric Plot '''
     if True:
@@ -350,7 +423,7 @@ if __name__ == '__main__':
         plt.ylim(0, 1.05)
         plt.legend(title='Method: AUC')
         plt.tight_layout()
-        output_path = join(cam_dir, 'deletion_metric_methods.png')
+        output_path = join(cam_dir, f'deletion_metric_methods.{ext}')
         if output_path is not None and not args.no_log:
             plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
         if args.show:
@@ -406,7 +479,7 @@ if __name__ == '__main__':
             plt.gca().spines['right'].set_visible(False)
 
             plt.tight_layout()
-            output_path = join(cam_dir, 'deletion_metric_classes.png')
+            output_path = join(cam_dir, f'deletion_metric_classes.{ext}')
             if output_path and not args.no_log:
                 plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
             if args.show:
@@ -430,8 +503,8 @@ if __name__ == '__main__':
 
             for _, cam_entry in entries.iterrows():
                 cam_method_name = cam_entry['method']
-                output_path = join(cam_dir, f'{cam_method_name}_{limit}_idx{idx}.png')
-                plot2x3(cam_entry, s['image'], output_path, **{'vmin': 0, 'vmax': 10})
+                output_path = join(cam_dir, f'{cam_method_name}_{limit}_idx{idx}.{ext}')
+                plot2x3(cam_entry, s['image'], output_path, **{'vmin': 0, 'vmax': 255, 'cmap': 'viridis'})
 
     ''' Average CAM by predicted category '''
     if False:
@@ -443,8 +516,8 @@ if __name__ == '__main__':
                 cams_pred[i] = np.mean(cams[preds == i], axis=0)[i]
         cams_pred[np.isnan(cams_pred)] = 0
 
-        output_path = join(cam_dir, f'{cams_id}_avg_class_pred.png')
-        plot1x5(cams_pred, 'Average GradCAM per predicted class', output_path)
+        output_path = join(cam_dir, f'{cams_id}_avg_class_pred.{ext}')
+        plot1x5(cams_pred, 'Average CAM per predicted class', output_path)
 
     ''' Average CAM by ground-truth category '''
     if False:
@@ -455,8 +528,8 @@ if __name__ == '__main__':
                 cams_gt[i] = np.mean(cams[labels == i], axis=0)[i]
         cams_gt[np.isnan(cams_gt)] = 0
 
-        output_path = join(cam_dir, f'{cams_id}_avg_class_label.png')
-        plot1x5(cams_gt, 'Average GradCAM per ground_truth class', output_path)
+        output_path = join(cam_dir, f'avg_class_label.{ext}')
+        plot1x5(cams_gt, 'Average CAM per ground_truth class', output_path)
 
     ''' Average CAM per (predicted, ground-truth) category '''
     if False:
@@ -470,12 +543,13 @@ if __name__ == '__main__':
                     cams_confmat[i, j] = np.mean(cams[(labels == i) & (preds == j)], axis=0)[j]
 
         cams_confmat[np.isnan(cams_confmat)] = 0
-        output_path = join(cam_dir, f'{cams_id}_avg_confmat.png')
+        output_path = join(cam_dir, f'avg_confmat.{ext}')
         plot5x5(cams_confmat, output_path)
 
     ''' Incorrect predictions: image, predicted and ground truth CAMs '''
-    if False:
-        print(f'Incorrect predictions: {len(df[df["pred"] != df["label"]])} / {len(df)}')
+    n_incorrect = len(df[df["pred"] != df["label"]])
+    if False and n_incorrect > 0:
+        print(f'Incorrect predictions: {n_incorrect} / {len(df)}')
 
         for i, row in df.iterrows():
             if row['pred'] == row['label']:
@@ -492,7 +566,7 @@ if __name__ == '__main__':
             overlayed_pred = overlay_cam(img, cam_pred)
             overlayed_label = overlay_cam(img, cam_label)
 
-            output_path = join(cam_dir, f'{cams_id}_incorrect_pred_{idx}.png')
+            output_path = join(cam_dir, f'{cams_id}_incorrect_pred_{idx}.{ext}')
             title = f'Prediction Error'
 
             # 1x3 figure: image, predicted cam, ground truth cam

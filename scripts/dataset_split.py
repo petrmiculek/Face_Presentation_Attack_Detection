@@ -105,9 +105,9 @@ if __name__ == '__main__':
         os.makedirs(lists_dir)
 
     logging.info(f'Writing to dir: {lists_dir}')
-    save_path_train = join(lists_dir, f'dataset_{dataset.name}_train_{mode_long}.pkl')
-    save_path_val = join(lists_dir, f'dataset_{dataset.name}_val_{mode_long}.pkl')
-    save_path_test = join(lists_dir, f'dataset_{dataset.name}_test_{mode_long}.pkl')
+    save_path_train = join(lists_dir, f'dataset_{dataset.name}_train_{mode_long}_{note}.pkl')
+    save_path_val = join(lists_dir, f'dataset_{dataset.name}_val_{mode_long}_{note}.pkl')
+    save_path_test = join(lists_dir, f'dataset_{dataset.name}_test_{mode_long}_{note}.pkl')
 
     # stop if files already exist
     if any(isfile(x) for x in [save_path_train, save_path_val, save_path_test]):

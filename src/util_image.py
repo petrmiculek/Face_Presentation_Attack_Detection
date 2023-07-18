@@ -75,6 +75,12 @@ def sobel_edges(img):
     return img
 
 
+def model_cam_shape(model):
+    name = model.__class__.__name__
+    shapes = {'resnet18': (7, 7), 'efficientnet_v2_s': (12, 12)}
+    return shapes[name]
+
+
 class SobelFakeCAM:
     """
     Fake CAM - Sobel edge detector.
@@ -83,6 +89,7 @@ class SobelFakeCAM:
     """
 
     def __init__(self, *args, **kwargs):
+        self.shape = model_cam_shape(kwargs['model'])
         pass
 
     def __call__(self, input_tensor, *args, **kwargs):
@@ -90,7 +97,10 @@ class SobelFakeCAM:
         if isinstance(input_tensor, torch.Tensor):
             input_tensor = input_tensor[0].cpu().numpy().transpose(1, 2, 0)
 
-        return sobel_edges(input_tensor)
+        edges = sobel_edges(input_tensor)
+        edges_lr = cv2.resize(edges, self.shape, interpolation=cv2.INTER_AREA)
+
+        return edges_lr
 
 
 class CircleFakeCAM:
@@ -101,21 +111,29 @@ class CircleFakeCAM:
     """
 
     def __init__(self, *args, **kwargs):
+        self.shape = model_cam_shape(kwargs['model'])
         self.cache = dict()
 
     def __call__(self, input_tensor, *args, **kwargs):
-        shape = input_tensor.shape
-        if input_tensor.ndim == 4:
-            shape = shape[1:]
+        # shape = input_tensor.shape
+        # if input_tensor.ndim == 4:
+        #     shape = shape[0]
+        # shape = (1, shape[2], shape[3])
+        # ignore input shape, use model-determined shape
+        shape = self.shape
         if shape in self.cache:
             expl = self.cache[shape]
         else:
-            center = (shape[0] // 2, shape[1] // 2)
-            dists = np.sqrt((np.arange(0, shape[0])[:, None] - center[0]) ** 2 + (
-                    np.arange(0, shape[1])[None, :] - center[1]) ** 2)
-            expl = normalize(-dists)
+            expl = self.gaussian_circle(shape)
             self.cache[shape] = expl
 
+        return expl
+
+    def gaussian_circle(self, shape):
+        center = (shape[0] // 2, shape[1] // 2)
+        dists = np.sqrt((np.arange(0, shape[0])[:, None] - center[0]) ** 2 + (
+                np.arange(0, shape[1])[None, :] - center[1]) ** 2)
+        expl = normalize(-dists)
         return expl
 
 
