@@ -16,6 +16,9 @@ sys.path.extend(sys_path_extension)
 import torch
 
 from torch import autocast
+from torch.nn import CrossEntropyLoss
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler
 import numpy as np
 from tqdm import tqdm
@@ -129,15 +132,13 @@ if __name__ == '__main__':
         model, preprocess = load_model(model_name, num_classes, freeze_backbone=args.freeze)
         model.to(device)
 
-        ''' Model Setup '''
-        criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
-        # BCEWithLogitsLoss
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999))
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-                                                               factor=config.HPARAMS['lr_scheduler_factor'],
-                                                               patience=config.HPARAMS['lr_scheduler_patience'],
-                                                               min_lr=config.HPARAMS['lr_scheduler_min_lr'],
-                                                               verbose=True)
+        ''' Training Setup '''
+        # loss/criterion objects - separation necessary; softmax included in the loss
+        criterions = {'bin': CrossEntropyLoss(), 'unif': CrossEntropyLoss(), 'orig': CrossEntropyLoss()}
+        optimizer = Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999))
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=config.HPARAMS['lr_scheduler_factor'],
+                                      patience=config.HPARAMS['lr_scheduler_patience'],
+                                      min_lr=config.HPARAMS['lr_scheduler_min_lr'], verbose=True)
         early_stopping = EarlyStopping(patience=config.HPARAMS['early_stopping_patience'],
                                        verbose=True, path=checkpoint_path)
         scaler = GradScaler()  # mixed precision training (16-bit)
@@ -191,6 +192,7 @@ if __name__ == '__main__':
 
     epochs_trained = 0
     stop_training = False
+    key = 'unif' if training_mode == 'all_attacks' else 'bin'
     grad_acc_steps = 4
     for epoch in range(epochs_trained, epochs_trained + args.epochs):
         print(f'Epoch {epoch}')
@@ -198,25 +200,35 @@ if __name__ == '__main__':
         ep_train_loss = 0
         preds_train = []
         labels_train = []
+        losses_bin, losses_mc, losses_mc_orig = [], [], []
         try:
             progress_bar = tqdm(train_loader, mininterval=1., desc=f'ep{epoch} train')
             for i, sample in enumerate(progress_bar, start=1):
                 img, label = sample['image'], sample['label']
                 img = img.to(device, non_blocking=True)
                 label = label.to(device, non_blocking=True)
+                label_bin = sample['label_bin'].to(device, non_blocking=True)
+                label_multiclass = sample['label_unif'].to(device, non_blocking=True)
+                label_multiclass_orig = sample['label_orig'].to(device, non_blocking=True)
                 # forward pass
                 with autocast(device_type='cuda', dtype=torch.float16):
-                    out = model(img)  # prediction
-                    loss = criterion(out, label)
+                    out = model.forward_train(img)  # prediction
+                    loss_bin = criterions['bin'](out['bin'], label)
+                    loss_mc = criterions['unif'](out['unif'], label_multiclass)
+                    loss_mc_orig = criterions['orig'](out['orig'], label_multiclass_orig)
+                    loss = loss_bin + loss_mc + loss_mc_orig
                 # backward pass
-                scaler.scale(loss).backward()
+                scaler.scale(loss_bin).backward()  # loss
                 if i % grad_acc_steps == 0:  # gradient step with accumulated gradients
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad(set_to_none=True)
                 with torch.no_grad():  # save predictions
+                    losses_bin.append(loss_bin.cpu().numpy())
+                    losses_mc.append(loss_mc.cpu().numpy())
+                    losses_mc_orig.append(loss_mc_orig.cpu().numpy())
                     ep_train_loss += loss.cpu().numpy()
-                    prediction_hard = torch.argmax(out, dim=1)
+                    prediction_hard = torch.argmax(out[key], dim=1)
                     labels_train.append(label.cpu().numpy())
                     preds_train.append(prediction_hard.cpu().numpy())
 
@@ -231,10 +243,12 @@ if __name__ == '__main__':
         preds_train, labels_train = np.concatenate(preds_train), np.concatenate(labels_train)
         metrics_train = compute_metrics(labels_train, preds_train)
         ep_train_loss /= len_train_loader
+        losses_bin, losses_mc, losses_mc_orig = np.mean(losses_bin), np.mean(losses_mc), np.mean(losses_mc_orig)
+        print(f'Losses: bin: {losses_bin:.4f}, mc: {losses_mc:.4f}, rose: {losses_mc_orig:.4f}')
 
         ''' Validation loop '''
         model.eval()
-        _, labels_val, preds_val, ep_loss_val = eval_loop(model, val_loader, criterion, device, f'ep{epoch} val')
+        _, labels_val, preds_val, ep_loss_val = eval_loop(model, val_loader, criterions[key], device, f'ep{epoch} val')
         metrics_val = compute_metrics(labels_val, preds_val)
         # log results
         res_epoch = {'Loss Training': ep_train_loss,
@@ -276,7 +290,7 @@ if __name__ == '__main__':
     ''' Test set evaluation '''
     model.eval()
     # end of test loop
-    _, labels_test, preds_test, loss_test = eval_loop(model, test_loader, criterion, device)
+    _, labels_test, preds_test, loss_test = eval_loop(model, test_loader, criterions[key], device, 'Test')
     metrics_test = compute_metrics(labels_test, preds_test)
     ''' Log results '''
     print(f'\nLoss Test  : {loss_test:06.4f}')

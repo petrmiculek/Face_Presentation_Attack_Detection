@@ -77,7 +77,7 @@ def sobel_edges(img):
 
 def model_cam_shape(model):
     name = model.__class__.__name__
-    shapes = {'resnet18': (7, 7), 'efficientnet_v2_s': (12, 12)}
+    shapes = {'resnet18': (7, 7), 'efficientnet_v2_s': (12, 12)}  # todo test
     return shapes[name]
 
 

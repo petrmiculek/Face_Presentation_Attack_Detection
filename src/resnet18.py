@@ -249,7 +249,11 @@ class ResNet(nn.Module):
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = nn.Linear(512, 1000)  # dummy for weights loading
+        ''' Create custom classifier heads '''
+        self.fc_binary = nn.Linear(512, 2)
+        self.fc_multiclass = nn.Linear(512, 5)
+        self.fc_rose = nn.Linear(512, 8)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -309,27 +313,6 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tensor:
-        # See note [TorchScript super()]
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-
-        return x
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self._forward_impl(x)
-
     # not necessary if forward hooks are used
     def fw_with_emb(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """ Return prediction and embedding """
@@ -337,17 +320,70 @@ class ResNet(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-
         x = self.avgpool(x)
         x = torch.flatten(x, 1)  # x = embedding
-        y = self.fc(x)  # y = prediction
-
+        y = self.fc_multiclass(x)  # y = prediction  # todo depends on how `fc` is set up
         return y, x
+
+    def forward_train(self, x: Tensor) -> Dict[str, Tensor]:
+        """ Return prediction and embedding """
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)  # embedding
+        y_binary = self.fc_binary(x)  # prediction (binary, 2 classes)
+        y_multiclass = self.fc_multiclass(x)  # prediction (multiclass, 5 classes)
+        y_rose = self.fc_rose(x)  # prediction (multiclass, 8 classes)
+
+        return {'bin': y_binary, 'unif': y_multiclass, 'orig': y_rose}
+
+    def forward_multiclass(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)  # embedding
+        y_multiclass = self.fc_multiclass(x)
+        return y_multiclass
+
+    forward = forward_multiclass  # default forward function
+
+    def forward_binary(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)  # embedding
+        y_binary = self.fc_binary(x)
+        return y_binary
+
+    def switch_to_binary(self):
+        self.forward = self.forward_binary
+        print('Model default predict switched to binary')
+
+    def switch_to_multiclass(self):
+        self.forward = self.forward_multiclass
+        print('Model default predict switched to multiclass')
 
 
 def _resnet(
@@ -363,7 +399,7 @@ def _resnet(
     model = ResNet(block, layers, **kwargs)
 
     if weights is not None:
-        model.load_state_dict(weights.get_state_dict(progress=progress))
+        model.load_state_dict(weights.get_state_dict(progress=progress), strict=False)
 
     return model
 

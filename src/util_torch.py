@@ -7,85 +7,40 @@ import torch
 import numpy as np
 from prettytable import PrettyTable
 from torch.nn import functional as F
+from torch.nn import Dropout
 from torchvision.models import ResNet18_Weights
-from torchvision.models import efficientnet_v2_s, EfficientNet_V2_S_Weights
+from torchvision.models import EfficientNet_V2_S_Weights  # unused: efficientnet_v2_s, subclassed instead
+
 from tqdm import tqdm
 
+from efficientnet_v2_s import efficientnet_v2_s
 # local
-from metrics import compute_metrics
 from resnet18 import resnet18
 from augmentation import ClassificationPresetTrain, ClassificationPresetEval
 
 
-def change_relu_resnet(model):
-    """
-    Change inplace ReLU to non-inplace ReLU in ResNet model.
-    source: https://github.com/LenkaTetkova/robustness-of-explanations/blob/433fca431c13a1cc1e1c059fbac05685637ee391/src/models/torch_model.py#L109
-    """
-
-    model.relu = torch.nn.ReLU(inplace=False)
-    for layer in [model.layer1, model.layer2, model.layer3, model.layer4]:
-        for key in layer._modules.keys():
-            layer._modules[key].relu = torch.nn.ReLU(inplace=False)
-    return model
-
-
-def change_silu_efficientnet(model):
-    """
-    Change inplace SiLU to non-inplace SiLU in EfficientNet model.
-    source: https://github.com/LenkaTetkova/robustness-of-explanations/blob/433fca431c13a1cc1e1c059fbac05685637ee391/src/models/torch_model.py#L109
-    """
-    for i in range(len(model.features._modules)):
-        for j in range(len(model.features._modules[str(i)]._modules)):
-            module_j = model.features._modules[str(i)]._modules[str(j)]
-            if isinstance(module_j, torch.nn.SiLU):
-                module_j = torch.nn.SiLU(inplace=False)
-            elif 'block' in module_j._modules.keys():
-                k_max = len(module_j._modules['block']._modules)
-                for k in range(k_max):
-                    module_k = module_j._modules['block']._modules[str(k)]._modules
-                    m_max = len(module_k)
-                    for m in range(m_max):
-                        name_matches_1 = str(m) in module_k.keys()
-                        type_matches_1 = isinstance(module_k[str(m)], torch.nn.SiLU)
-                        name_matches_2 = "activation" in module_k.keys()
-                        type_matches_2 = isinstance(module_k['activation'], torch.nn.SiLU)
-
-                        if (name_matches_1 and type_matches_1):
-                            module_k[str(m)] = torch.nn.SiLU(inplace=False)
-                        elif (name_matches_2 and type_matches_2):
-                            module_k['activation'] = torch.nn.SiLU(inplace=False)
-    model.classifier._modules['0'] = torch.nn.Dropout(p=0.3, inplace=False)
-    torch.autograd.set_grad_enabled(True)
-    for param in model.classifier.parameters():
-        param.requires_grad = True
-    for param in model.features.parameters():
-        param.requires_grad = True
-    return model
-
-
 def load_model(model_name, num_classes, freeze_backbone=False):
     """ Load model, replace classification head, maybe freeze backbone. """
+
     if model_name == 'resnet18':
         # load model with pretrained weights
         weights = ResNet18_Weights.IMAGENET1K_V1
         model = resnet18(weights=weights, weight_class=ResNet18_Weights)
         # replace last layer with n-ary classification head
-        model.fc = torch.nn.Linear(512, num_classes)
         transforms_orig = weights.transforms()
+
     elif model_name == 'efficientnet_v2_s':
         weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
         model = efficientnet_v2_s(weights=weights,
                                   weight_class=EfficientNet_V2_S_Weights)
-        dropout = 0.2  # as per original model code
-        model.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(p=dropout, inplace=False),
-            torch.nn.Linear(1280, num_classes),
-        )
-
         transforms_orig = weights.transforms()
     else:
         raise ValueError(f'Unknown model name {model_name}')
+    ''' Set model to binary or multiclass '''
+    if num_classes == 2:
+        model.switch_to_binary()
+    else:
+        model.switch_to_multiclass()
 
     ''' Disable in-place operations '''
     if True:
@@ -95,11 +50,10 @@ def load_model(model_name, num_classes, freeze_backbone=False):
         for module in model.modules():
             if isinstance(module, torch.nn.ReLU) or \
                     isinstance(module, torch.nn.SiLU) or \
-                    isinstance(module, torch.nn.Dropout):
+                    isinstance(module, Dropout):
                 module.inplace = False
                 inplace_c += 1
                 inplace_n.append(module.__class__.__name__)
-        # todo in-place: if broken check here [func]
 
         if inplace_c > 0:
             print(f'Disabled inplace operations for {inplace_c} modules')
@@ -255,6 +209,53 @@ def eval_loop(model, loader, criterion, device, desc='Eval'):
     labels = np.concatenate(labels)
     paths = np.concatenate(paths)
     return paths, labels, preds, ep_loss
+
+
+def change_relu_resnet(model):
+    """
+    Change inplace ReLU to non-inplace ReLU in ResNet model.
+    source: https://github.com/LenkaTetkova/robustness-of-explanations/blob/433fca431c13a1cc1e1c059fbac05685637ee391/src/models/torch_model.py#L109
+    """
+
+    model.relu = torch.nn.ReLU(inplace=False)
+    for layer in [model.layer1, model.layer2, model.layer3, model.layer4]:
+        for key in layer._modules.keys():
+            layer._modules[key].relu = torch.nn.ReLU(inplace=False)
+    return model
+
+
+def change_silu_efficientnet(model):
+    """
+    Change inplace SiLU to non-inplace SiLU in EfficientNet model.
+    source: https://github.com/LenkaTetkova/robustness-of-explanations/blob/433fca431c13a1cc1e1c059fbac05685637ee391/src/models/torch_model.py#L109
+    """
+    for i in range(len(model.features._modules)):
+        for j in range(len(model.features._modules[str(i)]._modules)):
+            module_j = model.features._modules[str(i)]._modules[str(j)]
+            if isinstance(module_j, torch.nn.SiLU):
+                module_j = torch.nn.SiLU(inplace=False)
+            elif 'block' in module_j._modules.keys():
+                k_max = len(module_j._modules['block']._modules)
+                for k in range(k_max):
+                    module_k = module_j._modules['block']._modules[str(k)]._modules
+                    m_max = len(module_k)
+                    for m in range(m_max):
+                        name_matches_1 = str(m) in module_k.keys()
+                        type_matches_1 = isinstance(module_k[str(m)], torch.nn.SiLU)
+                        name_matches_2 = "activation" in module_k.keys()
+                        type_matches_2 = isinstance(module_k['activation'], torch.nn.SiLU)
+
+                        if (name_matches_1 and type_matches_1):
+                            module_k[str(m)] = torch.nn.SiLU(inplace=False)
+                        elif (name_matches_2 and type_matches_2):
+                            module_k['activation'] = torch.nn.SiLU(inplace=False)
+    model.classifier._modules['0'] = Dropout(p=0.3, inplace=False)
+    torch.autograd.set_grad_enabled(True)
+    for param in model.classifier.parameters():
+        param.requires_grad = True
+    for param in model.features.parameters():
+        param.requires_grad = True
+    return model
 
 
 """

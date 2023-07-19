@@ -45,6 +45,9 @@ class BaseDataset(Dataset):
                        'label': sample['label'],
                        'path': sample['path'],
                        'idx': sample['idx'],
+                       'label_orig': sample['label_orig'],
+                       'label_unif': sample['label_unif'],
+                       'label_bin': sample['label_bin'],
                        # 'image_orig': image_orig
                        }
         return sample_dict
