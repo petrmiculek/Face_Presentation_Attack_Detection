@@ -213,12 +213,12 @@ if __name__ == '__main__':
                 # forward pass
                 with autocast(device_type='cuda', dtype=torch.float16):
                     out = model.forward_train(img)  # prediction
-                    loss_bin = criterions['bin'](out['bin'], label)
+                    loss_bin = criterions['bin'](out['bin'], label_bin)
                     loss_mc = criterions['unif'](out['unif'], label_multiclass)
                     loss_mc_orig = criterions['orig'](out['orig'], label_multiclass_orig)
                     loss = loss_bin + loss_mc + loss_mc_orig
                 # backward pass
-                scaler.scale(loss_bin).backward()  # loss
+                scaler.scale(loss).backward()
                 if i % grad_acc_steps == 0:  # gradient step with accumulated gradients
                     scaler.step(optimizer)
                     scaler.update()

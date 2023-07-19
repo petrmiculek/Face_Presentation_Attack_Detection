@@ -22,10 +22,6 @@ from glob import glob
 from os.path import join, basename, isfile, dirname
 import warnings
 
-from dataset_base import show_labels_distribution
-from util_image import overlay_cam, get_marker
-from util_torch import init_seed, get_dataset_module
-
 # fix for local import problems - add all local directories
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
@@ -39,6 +35,7 @@ import pandas as pd
 import torch
 import matplotlib
 import seaborn as sns
+from tqdm import tqdm
 
 if "PYCHARM_HOSTED" in os.environ:
     matplotlib.use('module://backend_interagg')  # default backend for Pycharm
@@ -57,6 +54,9 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
+from dataset_base import show_labels_distribution
+from util_image import overlay_cam, get_marker
+from util_torch import init_seed, get_dataset_module
 
 ''' Global variables '''
 run_dir = ''
@@ -77,37 +77,43 @@ parser.add_argument('-p', '--path_prefix', help='path to dataset')
 parser.add_argument('-f', '--files', help='path(s) to CAMs', type=str, nargs='+')
 
 
-def read_cams(path):
+def read_cams(paths):
     """ Read pickled CAM DataFrame/s. """
     df_ = None
-    if isinstance(path, str):
-        df_ = pd.read_pickle(path)
-    elif isinstance(path, list):
+    if isinstance(paths, str):
+        df_ = pd.read_pickle(paths)
+    elif isinstance(paths, list):
         # merge dataframes
         lens = []
-        for p in path:
-            df_tmp = pd.read_pickle(p)
-            lens.append(len(df_tmp))
-            source = basename(p)
-            df_tmp['path'] = df_tmp['path'].apply(basename)  # todo verify
-            df_tmp['source'] = source
-            print(f'Loading {source}, shape: {df_tmp.shape}')
-            if df_ is None:
-                df_ = df_tmp
+        for p in tqdm(paths):
+            try:
+                df_tmp = pd.read_pickle(p)
+                source = basename(p)
+                df_tmp['path'] = df_tmp['path'].apply(basename)
+                df_tmp['source'] = source  # broadcast to all rows
+                print(f'Loading {source}, shape: {df_tmp.shape}')
+                if df_ is None:
+                    df_ = df_tmp
+                    lens.append(len(df_tmp))
+                    continue
+                ''' Check for overlapping lines by: idx, method '''
+                intersection = df_tmp.merge(df_, on=['idx', 'method'], how='inner')
+                if not intersection.empty:
+                    print(f'Warning: {source} intersects with: {intersection["file_y"].unique()}')
+                ''' Check for conflicting attributes - label, pred '''
+                conflicting = (intersection['label_x'] != intersection['label_y']) | \
+                              (intersection['pred_x'] != intersection['pred_y'])
+                if any(conflicting):
+                    print(f'Warning: {source} and {intersection["file"].iloc[0]} have conflicting labels/preds')
+                lens.append(len(df_tmp))
+
+                df_ = pd.concat([df_, df_tmp], ignore_index=True)
+            except Exception as e:
+                print(e)
                 continue
-            ''' Check for overlapping lines by: idx, method '''
-            intersection = df_tmp.merge(df_, on=['idx', 'method'], how='inner')
-            if not intersection.empty:
-                print(f'Warning: {source} intersects with: {intersection["file_y"].unique()}')
-            ''' Check for conflicting attributes - label, pred '''
-            conflicting = (intersection['label_x'] != intersection['label_y']) | \
-                          (intersection['pred_x'] != intersection['pred_y'])
-            if any(conflicting):
-                print(f'Warning: {source} and {intersection["file"].iloc[0]} have conflicting labels/preds')
 
-            df_ = pd.concat([df_, df_tmp], ignore_index=True)
-
-        print(f'Merged {len(path)} dataframes, total shape: {df_.shape}, original lengths: {lens} -> {sum(lens)}')
+        print(
+            f'Merged {len(lens)}/{len(paths)} dataframes, total shape: {df_.shape}, original lengths: {lens} -> {sum(lens)}')
 
     return df_
 
@@ -218,11 +224,14 @@ def plot5x5(cams, output_path=None):
     plt.close(fig)
 
 
-def deletion_per_image(df):
-    global args, cam_dir, ext
+def deletion_per_image(df, many_ok=False):
+    global args, cam_dir, ext, percentages_kept
     # x: perturbation level
     # y: prediction drop
-    percentages_kept = df['percentages_kept'].values[0]  # assume same for all
+    if len(df) > 200 and not many_ok:
+        print(f'deletion_per_image: too many {len(df)} samples, '
+              f'override by `many_ok` to run anyway.')
+
     y = df['del_scores'].values
     idxs = df['idx'].values
     plt.figure(figsize=(6, 4))
@@ -283,12 +292,13 @@ if __name__ == '__main__':
 
     # read all limit strings from filenames
     filenames = [basename(f) for f in args.files]
-    limits = [f.split('_')[2].split('.')[0] for f in filenames]
-    if len(set(limits)) != 1:
+    limits = set(f.split('_')[2].split('.')[0] for f in filenames)
+    if len(limits) != 1:
         raise ValueError(f'Multiple different limits in filenames: {limits}')
 
     methods = [f.split('_')[1] for f in filenames]
-    limit = -1 if limits[0] == 'all' else int(limits[0])
+    limit = limits.pop()  # only one in the set (which can also be destroyed)
+    limit = -1 if limit == 'all' else int(limit)
 
     ''' Load CAMs '''
     df = read_cams(args.files)
@@ -337,11 +347,14 @@ if __name__ == '__main__':
 
     # -------------------------------------------- vvv
     # temporary: shapes of CAMs
-    cam_shape = df['cam'].values[0].shape
-    cam_shape = (5, 1, 7, 7)  # temporary
+    # cam_shape = (5, 1, 7, 7)  # temporary
     shp = lambda x: x.shape
-    df['shape'] = df.cam.apply(shp)
-    dg = df[['method', 'shape']].groupby('shape')
+    df['shp'] = df.cam.apply(shp)
+    shape_value_counts = df.shp.value_counts()
+    if len(df.shp.unique()) != 1:
+        print('Warning: different CAM shapes!\n', shape_value_counts)
+    cam_shape = df['cam'].values[0].shape
+    dg = df[['method', 'shp']].groupby('shp')
     for g, rows in dg:
         print(g, rows.method.value_counts())
 
