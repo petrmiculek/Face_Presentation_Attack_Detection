@@ -7,9 +7,9 @@ import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 
-
 from sklearn.metrics import confusion_matrix as conf_mat, classification_report, roc_curve, RocCurveDisplay, auc
 import seaborn as sns
+
 
 # local
 # -
@@ -92,51 +92,52 @@ def compute_metrics(labels, preds, bona_fide=0):
     }
 
 
+def confusion_matrix(gts, preds, output_location=None, labels=None, show=False, **kwargs):
+    """
+    Create and show/save confusion matrix
 
-def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, show=True, **kwargs):
-    """Create and show/save confusion matrix"""
-
-    model_name = kwargs.pop('model_name',
-                            'UnnamedModel')  # todo add model_name to confMat and kwargs when calling it [opt]
+    :param gts: ground truth labels
+    :param preds: predicted labels
+    :param output_location: where to save the plot
+    :param labels: list of labels to use
+    :param show: whether to show the plot
+    **keyword arguments:
+    :param normalize: whether to normalize the confusion matrix
+    :param title_suffix: suffix to add to the title
+    """
     normalize = kwargs.pop('normalize', False)
     title_suffix = kwargs.pop('title_suffix', '')
-
     title = 'Confusion Matrix' + (' - ' + title_suffix if title_suffix else '')
-    # epochs_trained = '20'
     plot_kwargs = {}
     if normalize:
         # {'true', 'pred', 'all'}, default = None
         normalize = 'true'
-        plot_kwargs.update({
-            'vmin': 0.0,
-            'vmax': 1.0,
-            'fmt': '0.2f',
-        })
+        plot_kwargs.update({'vmin': 0.0, 'vmax': 1.0, 'fmt': '0.2f'})
     else:
         normalize = None
         plot_kwargs['fmt'] = 'd'
 
-    labels_numeric = np.arange(len(labels))
-    cm = conf_mat(list(gts), list(predictions_hard), normalize=normalize, labels=labels_numeric)
+    ''' Remove classes with no samples (predicted or true) '''
+    labels_idxs = np.arange(len(labels))
+    if len(labels_idxs) > 2:  # don't remove for binary
+        labels_idxs = labels_idxs[np.isin(labels_idxs, preds) | np.isin(labels_idxs, gts)]
+        labels = np.array(labels)[labels_idxs]
 
-    if show:
-        # also print the confusion matrix
-        print(title)
-        cm = pd.DataFrame(cm, index=labels, columns=labels)
-        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-            print(cm)
-
-    sns.set_context('paper', font_scale=1.0)
+    cm = conf_mat(list(gts), list(preds), normalize=normalize, labels=labels_idxs)
+    ''' Print to console '''
+    print(title)
+    cm = pd.DataFrame(cm, index=labels, columns=labels)
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        print(cm)
+    ''' Plot '''
+    sns.set_context('paper', font_scale=2.5 if len(labels) == 2 else 1.5)
     fig_cm = sns.heatmap(
         cm,
         annot=True,
+        robust=True,
         xticklabels=labels,
         yticklabels=labels,
-        # fmt='0.2f',
-        # vmin=0.0,
-        # vmax=1.0
-        **plot_kwargs
-    )
+        **plot_kwargs)
     fig_cm.set_title(title)
     fig_cm.set_xlabel('Predicted')
     fig_cm.set_ylabel('True')
@@ -145,15 +146,12 @@ def confusion_matrix(gts, predictions_hard, output_location=None, labels=None, s
 
     if show:
         fig_cm.figure.show()
-
     if output_location:
-        fig_cm.figure.savefig(output_location,
-                              bbox_inches='tight')
-
+        fig_cm.figure.savefig(output_location, bbox_inches='tight')
     plt.close(fig_cm.figure)
 
 
-# TODO ROC Curve code unused
+# TODO ROC Curve code unused  [func]
 '''
 # currently unused
 def plot_roc_curve(gts, predictions, show=True, output_location=None):

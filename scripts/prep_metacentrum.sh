@@ -88,14 +88,44 @@ if [ -z "wont-run" ]; then
   # perl -pe 's|\Q..\E|/dev/shm/scratch.shm/petrmiculek/job_14866782.meta-pbs.metacentrum.cz|g' dataset_lists/dataset_rose_youtu_val_all_attacks.csv >dataset_lists/val
   # mv dataset_lists/val dataset_lists/dataset_rose_youtu_val_all_attacks.csv
   #/mnt/storage-brno2/home/petrmiculek/RoseYoutu-full
+
+  # prepare
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m all_attacks -c full
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m unseen_attack -k 1 -c full
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m unseen_attack -k 2 -c full
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m unseen_attack -k 3 -c full
+
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m one_attack -k 1 -c full
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m one_attack -k 2 -c full
+  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m one_attack -k 3 -c full
+
   singularity shell --nv /cvmfs/singularity.metacentrum.cz/NGC/PyTorch\:22.10-py3.SIF
+  tar -xf rt_single.tar --directory . --checkpoint=.10000
   rsync -ah --progress ry_images50_filtered.tar $SCRATCHDIR
-  tar -xf ry_images50_filtered.tar --directory . --checkpoint=.10000
+  cd $SCRATCHDIR && tar -xf ry_images50_filtered.tar --directory . --checkpoint=.10000
 #  python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 1 -w 2 -l 0.00001
   python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 32 -w 4 -l 0.00001 -m unseen_attack -k 1 -a efficientnet_v2_s
   python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 8 -w 1 -l 0.00001 -m unseen_attack -k 1 -a efficientnet_v2_s
 
-  python3 src/train.py -p $SCRATCHDIR/ry_images50 -e 15 -b 8 -w 1 -l 0.00001 -m unseen_attack -k 3
+#  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 1 -b 64 -w 4 -l 0.00001 -m unseen_attack -k 3  # testing multi-task
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 128 -w 4 -l 0.00001 -m unseen_attack -k 3
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 128 -w 4 -l 0.00001 -m unseen_attack -k 2
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 128 -w 4 -l 0.00001 -m unseen_attack -k 1  # ran 23:18
+# python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 8 -b 16 -w 4 -l 0.00001 -m unseen_attack -k 1 -a efficientnet_v2_s -s 42
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 16 -w 2 -l 0.00001 -m unseen_attack -k 2 -a efficientnet_v2_s -s 42
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 16 -w 4 -l 0.00001 -m unseen_attack -k 3 -a efficientnet_v2_s -s 42
 
-  python3 scripts/dataset_split.py -p $SCRATCHDIR/ry_images50 -d rose_youtu -m all_attacks -c full
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 16 -w 2 -l 0.00001 -m one_attack -k 2 -a efficientnet_v2_s -s 42
+
+  rsync -ah --progress rt_single.tar $SCRATCHDIR
+  (cd $SCRATCHDIR && tar -xf rt_single.tar --directory . --checkpoint=.1000)
+
+  python3 src/evaluate.py -w 2 -b 32 -p $SCRATCHDIR/rt_single_15 -d rose_youtu-single --cam -r runs/solar-aardvark-139/
+# GradCAMPlusPlus, XGradCAM,EigenCAM
+
 fi
+
+
+  python3 src/train.py -p $SCRATCHDIR/ry_images50 -d rose_youtu-full -e 15 -b 16 -w 4 -l 0.00001 -m unseen_attack -k 2 -a efficientnet_v2_s -s 42
+
+  python3 src/train.py -p /mnt/sdb1/dp/rt_single_15/ -d rose_youtu-single -e 1 -b 16 -w 4 -l 0.00001 -m unseen_attack -k 3 -n -s 42

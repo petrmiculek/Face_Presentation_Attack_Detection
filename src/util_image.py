@@ -214,7 +214,9 @@ def get_marker(idx=None):
     from random import randint
     markers = ['o', 's', 'v', '^', 'D', 'P', 'X', 'h', 'd', 'p', 'H', '8', '>', '<', '*', 'x', 'o', 's', 'v', '^', 'D',
                'P', 'X', 'h', 'd', 'p', 'H', '8', '>', '<', '*', 'x']
-    if idx is None or not isinstance(idx, int):
+    try:
+        idx = int(idx)
+    except (ValueError, TypeError):
         idx = randint(0, len(markers))
 
     return markers[idx % len(markers)]

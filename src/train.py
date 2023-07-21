@@ -322,15 +322,11 @@ if __name__ == '__main__':
 
     cm_path = join(outputs_dir, 'confmat_test' + '.pdf') if not args.no_log else None
     confusion_matrix(labels_test, preds_test, labels=label_names,
-                     normalize=False, title_suffix=title_suffix,
-                     output_location=cm_path, show=show_plots)
-
+                     title_suffix=title_suffix, output_location=cm_path)
     # binary confusion matrix
-    if args.mode == 'all_attacks':
-        cm_binary_path = join(outputs_dir, 'confmat_binary_test' + '.pdf') if not args.no_log else None
-        confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
-                         normalize=False, title_suffix=title_suffix,
-                         output_location=cm_binary_path, show=show_plots)
+    cm_binary_path = join(outputs_dir, 'confmat_binary_test' + '.pdf') if not args.no_log else None
+    confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
+                     title_suffix=title_suffix, output_location=cm_binary_path)
 
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}

@@ -63,6 +63,7 @@ parser.add_argument('-c', '--cam', help='generate CAM outputs', action='store_tr
 parser.add_argument('-v', '--eval', help='run evaluation loop', action='store_true')
 parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
 parser.add_argument('-z', '--show', help='show outputs', action='store_true')
+# possibly add --no-log
 
 
 def eval_loop_wrapper(loader):
@@ -147,7 +148,7 @@ if __name__ == '__main__':
     train_loader, val_loader, test_loader = \
         load_dataset(dataset_meta, dataset_module, path_prefix=args.path, limit=limit, quiet=False, **loader_kwargs)
     bona_fide = dataset_module.bona_fide
-    label_names = dataset_module.label_names_unified
+    label_names = dataset_module.label_names_unified  # dataset_base.get_dataset_setup :)
     ''' Output directory '''
     output_dir = join(run_dir, f'eval-{dataset_id}')
     os.makedirs(output_dir, exist_ok=True)
@@ -287,28 +288,22 @@ if __name__ == '__main__':
         """
         Features:
         - AUC
-            - per-class  #done#
             - how to normalize
         Baselines:
         - random weights
-        - sobel explanation  #done#
-        - centered circle explanation  #done#
-        
-        format:
-         list of dicts: { idx: int, label: int, pred: int, path: str, cam: np.array[C, H, W], TODO finish }
         """
         from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
             LayerCAM, RandomCAM  # todo check more methods in the library
         from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
         import cv2
+        from config import blur_cam_s as s_cam, blur_mask_s as s_mask, blur_img_s as s_img
         from util_image import SobelFakeCAM, CircleFakeCAM, deprocess
 
         cam_dir = join(output_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]] if model_name == 'efficientnet_v2_s' else [model.layer4[-1].bn2]
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [RandomCAM, SobelFakeCAM, CircleFakeCAM, HiResCAM, GradCAM, GradCAMPlusPlus, XGradCAM,
-                          EigenCAM]
+        method_modules = [GradCAM]  # , CircleFakeCAM]  # [RandomCAM, SobelFakeCAM, CircleFakeCAM, HiResCAM, GradCAM, GradCAMPlusPlus, XGradCAM, EigenCAM]
         # ScoreCAM OOM, FullGrad too different; AblationCAM runs too long
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
         #           ^ minor visual difference from ClassifierOutputTarget.
@@ -335,13 +330,10 @@ if __name__ == '__main__':
                     label = batch['label'][i].item()
 
                     ''' Generate CAMs for all classes (targets) '''
-                    cams = []
-                    for j, t in enumerate(targets):
-                        grayscale_cam = cam_method(input_tensor=img[None, ...], targets=[t])  # img 4D
-                        cams.append(grayscale_cam)
-
-                    # only work with CAM for the predicted class
-                    cam_pred = cams[pred_class][0]
+                    cams = [cam_method(input_tensor=img[None, ...], targets=[t]) for t in targets]
+                    cam_pred = cams[pred_class][0]  # deletion metric only works with CAM for the predicted class
+                    cams = np.stack(cams)  # [C, H, W]
+                    cams = (255 * cams).astype(np.uint8)[:, 0]  # uint8 to save space
 
                     # resize to original image size
                     wh_image = (img.shape[1], img.shape[2])
@@ -351,26 +343,25 @@ if __name__ == '__main__':
                     ''' Perturbation baselines '''
                     # numpy arrays float [0, 1], shape (C, H, W): C=1 for black, C=3 for blur and mean
                     b_black = np.zeros_like(cam_pred)[None, ...]
-                    b_blur = np.stack(  # np.stack for CHW
-                        [cv2.blur(img_np[c], (config.blur_img_s, config.blur_img_s)) for c in range(3)])
+                    b_blur = np.stack([cv2.blur(img_np[c], (s_img, s_img)) for c in range(3)])  # np.stack for CHW
                     b_mean = np.zeros_like(img_np) + np.mean(img_np, axis=(1, 2), keepdims=True)
-                    b_blurdark = (b_black + b_blur) / 4
+                    b_blurdark = b_blur / 4
+                    b_blurdarker = b_blur / 6
+                    b_blurdarkerer = b_blur / 8
 
                     ''' Perturb explained region '''
-
-                    cam_blurred = cam_pred + config.cam_blurred_weight * cv2.blur(cam_pred, (
-                    config.blur_cam_s, config.blur_cam_s))
+                    cam_blurred = cam_pred + config.cam_blurred_weight * cv2.blur(cam_pred, (s_cam, s_cam))
                     thresholds = np.percentile(cam_blurred, percentages)
                     thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
 
-                    # for base_name, baseline in zip(['black', 'blur', 'mean', 'blurdark'],
-                    #                                [b_black, b_blur, b_mean, b_blurdark]):  # unused for main experiments
-                    for base_name, baseline in [('black', b_black)]:
+                    # for base_name, baseline in [('black', b_black)]:
+                    for base_name, baseline in zip(['black', 'blur', 'blurdark', 'blurdarker', 'blurdarkerer'],
+                                                   [b_black, b_blur, b_blurdark, b_blurdarker, b_blurdarkerer]):  # unused for main experiments
                         baseline = torch.tensor(baseline, device=device)
                         imgs_perturbed = []
                         for th in thresholds:  # loop skips re-prediction for 100%
                             mask_np = np.float32(cam_blurred < th)
-                            mask_blurred = cv2.blur(mask_np, (config.blur_mask_s, config.blur_mask_s))
+                            mask_blurred = cv2.blur(mask_np, (s_mask, s_mask))
                             mask = torch.Tensor(mask_blurred).to(device)
                             img_masked = (img * mask + (1 - mask) * baseline)[None, ...]
                             imgs_perturbed.append(img_masked.to(dtype=torch.float32))
@@ -383,8 +374,6 @@ if __name__ == '__main__':
                         preds_perturbed_b, _ = predict(model, torch.cat(imgs_perturbed, dim=0))
                         ''' Save Deletion Scores '''
                         probs_perturbed = np.stack([pred, *preds_perturbed_b])
-                        cams = np.stack(cams)  # [C, H, W]
-                        cams = (255 * cams).astype(np.uint8)[:, 0]  # uint8 to save space
                         cams_out.append({'cam': cams, 'idx': idx, 'path': batch['path'][i],  # strings are not tensors
                                          'method': method_name, 'percentages_kept': config.percentages_kept,
                                          'baseline': base_name, 'label': label, 'pred': preds_classes_b[i],

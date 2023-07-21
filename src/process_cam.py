@@ -1,10 +1,13 @@
 """
 cams.pkl.gz:
-    cams
-    idx
-    pred
-    label
-    TODO make format complete [clean]
+['cam', 'idx', 'path', 'method', 'percentages_kept', 'baseline', 'label',
+   'pred', 'del_scores', 'pred_scores', 'source']
+joined with annotation paths:
+['label_text', 'speaking', 'device', 'glasses', 'environment', 'id1', 'id2',
+   'path_y', 'box_orig', 'box', 'landmarks', 'dim_orig', 'face_prob',
+   'laplacian_var', 'label_orig', 'label_unif', 'label_bin', 'label_y',]
+computed:
+['shp', 'del_scores_pred', 'auc', 'cam_pred']
 
 I need:
 model dir (runs/name), but not the model itself
@@ -36,6 +39,8 @@ import torch
 import matplotlib
 import seaborn as sns
 from tqdm import tqdm
+from PIL import Image
+import cv2
 
 if "PYCHARM_HOSTED" in os.environ:
     matplotlib.use('module://backend_interagg')  # default backend for Pycharm
@@ -54,9 +59,10 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
-from dataset_base import show_labels_distribution
-from util_image import overlay_cam, get_marker, plot_many
+from dataset_base import show_labels_distribution, pick_dataset_version, load_annotations
+from util_image import overlay_cam, get_marker, plot_many, sobel_edges
 from util_torch import init_seed, get_dataset_module
+from util_face import get_ref_landmarks
 
 ''' Global variables '''
 run_dir = ''
@@ -66,6 +72,7 @@ args = None
 cam_dir = None
 ext = 'png'  # extension for saving plots
 percentages_kept = None  # deletion metric percentages [0, 100]
+auc_percentages = None
 
 parser = argparse.ArgumentParser()  # description='Process CAMs'
 parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
@@ -128,28 +135,27 @@ def read_cams(paths, path_prefix=None):
 
 def plot1x5(cams, title='', output_path=None):
     """Plot 5 CAMs in a row."""
-    if True:
-        fig, axs = plt.subplots(1, 5, figsize=(16, 4), sharex=True)
-        for jc, ax in zip(enumerate(cams), axs.flat):
-            j, c = jc
-            if c.shape[0] == 1:
-                c = c[0]
-            # plt.subplot(1, 5, j + 1)
-            im = ax.imshow(c, vmin=0, vmax=255)
-            # make sure the aspect ratio is correct
-            ax.set_aspect('equal')
-            ax.set_title(label_names[j])
-            ax.axis('off')
+    fig, axs = plt.subplots(1, 5, figsize=(16, 4), sharex=True)
+    for jc, ax in zip(enumerate(cams), axs.flat):
+        j, c = jc
+        if c.shape[0] == 1:
+            c = c[0]
+        # plt.subplot(1, 5, j + 1)
+        im = ax.imshow(c, vmin=0, vmax=255)
+        # make sure the aspect ratio is correct
+        ax.set_aspect('equal')
+        ax.set_title(label_names[j])
+        ax.axis('off')
 
-        plt.tight_layout()
-        plt.subplots_adjust(left=0, right=1, top=0.95, bottom=-0.05)
-        fig.suptitle(title)
-        if output_path is not None and not args.no_log:
-            plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
-            print(f'Saved to {output_path}, {title} (plot1x5)')
-        if args.show:
-            plt.show()
-        plt.close(fig)
+    plt.tight_layout()
+    plt.subplots_adjust(left=0, right=1, top=0.95, bottom=-0.05)
+    fig.suptitle(title)
+    if output_path is not None and not args.no_log:
+        plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
+        print(f'Saved to {output_path}, {title} (plot1x5)')
+    if args.show:
+        plt.show()
+    plt.close(fig)
 
 
 def plot2x3(cam_entry, img, output_path=None, title='', **kwargs):
@@ -223,50 +229,47 @@ def plot5x5(cams, output_path=None):
     # write at the left: "predicted"
     axs[2, 0].text(-0.2, 0.5, 'predicted', rotation=90, va='center', ha='center', transform=axs[2, 0].transAxes,
                    fontsize=14)
+    plt_save_close(output_path)
 
+
+def plt_save_close(output_path=None):
     if output_path is not None and not args.no_log:
-        plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
-        print(f'Saved to {output_path}, {title} (plot5x5)')
+        plt.savefig(output_path, bbox_inches='tight', pad_inches=0.1)
+        print(f'Saved to {output_path}')
     if args.show:
         plt.show()
-    plt.close(fig)
+    plt.close()
 
 
-def deletion_per_image(del_scores, labels=None, x=None, many_ok=False, title=None):
-    global args, cam_dir, ext, percentages_kept
+def deletion_per_image(del_scores, line_labels=None, many_ok=False, title=None, output_path=None):
+    global percentages_kept
     # x: perturbation level
     # y: prediction drop
-    if len(del_scores) > 200 and not many_ok:
-        print(f'deletion_per_image: too many {len(df)} samples, '
+    if len(del_scores) > 20 and not many_ok:
+        print(f'deletion_per_image: too many {len(del_scores)} samples, '
               f'override by `many_ok` to run anyway.')
         return
-    if x is None:
-        x = percentages_kept
-
+    if isinstance(line_labels, pd.Series):
+        line_labels = line_labels.values
     plt.figure(figsize=(6, 4))
     for i, scores_line in enumerate(del_scores):
         kwargs = {}
-        if labels is not None and len(labels) > i:
-            kwargs = {'label': labels[i], 'marker': get_marker(labels[i])}
-        plt.plot(x, scores_line, **kwargs)
-    plt.xticks(x)  # original x-values ticks
+        if line_labels is not None and len(line_labels) > i:
+            kwargs = {'label': line_labels[i], 'marker': get_marker(line_labels[i])}
+        plt.plot(percentages_kept, scores_line, **kwargs)
+    plt.xticks(percentages_kept)  # original x-values ticks
     plt.gca().invert_xaxis()  # decreasing x axis
     plt.ylim(0, 1.05)
-    if len(del_scores) <= 10 and labels is not None:  # otherwise too many labels
+    if len(del_scores) <= 10 and line_labels is not None:  # otherwise too many labels
         plt.legend()
     plt.ylabel('Prediction Score')
     plt.xlabel('Perturbation Intensity (% of image kept)')
     plt.title(f'Deletion Metric {title}')
     # remove top and right spines
-    plt.gca().spines['top'].set_visible(False)
-    plt.gca().spines['right'].set_visible(False)
+    # plt.gca().spines['top'].set_visible(False)
+    # plt.gca().spines['right'].set_visible(False)
     plt.tight_layout()
-    output_path = join(cam_dir, f'deletion_metric_samples.{ext}')
-    if output_path and not args.no_log:
-        plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
-    if args.show:
-        plt.show()
-    plt.close()
+    plt_save_close(output_path)
 
 
 def auc(deletion_scores, percentages=None):
@@ -274,15 +277,86 @@ def auc(deletion_scores, percentages=None):
     if percentages is None:
         percentages = auc_percentages
     auc_ = np.trapz(deletion_scores, -percentages)
+    # using negative percentages, because trapz() assumes increasing x-values
     return auc_
+
+
+def deletion_metric_per(df, key, output_path=None, line_labels=None, ranges=True, sort_aucs=True):
+    key_unique = df[key].unique()
+    aucs = []
+    for k_val in key_unique:
+        df_kval = df[df[key] == k_val]
+        del_scores = np.stack(df_kval.del_scores_pred.values)
+        ys = np.mean(del_scores, axis=0)
+        auc_mean = df_kval.auc.mean()
+        aucs.append(auc_mean)
+        plt.plot(percentages_kept, ys, label=f'{k_val}: {auc_mean:.3f}')
+        if ranges:
+            stds = np.std(del_scores, axis=0)
+            plt.fill_between(percentages_kept, ys - stds, ys + stds, alpha=0.2)
+    plt.title(f'Deletion metric per {key}')
+    plt.xlabel('% pixels kept')
+    plt.ylabel('Prediction Score')
+    plt.xticks(percentages_kept)  # original x-values ticks
+    plt.gca().invert_xaxis()  # decreasing x axis
+    plt.ylim(0, 1.05)
+    plt.legend(title=f'{key}: AUC')
+    if sort_aucs:  # reorder legend by aucs (ascending)
+        handles, labels_auto = plt.gca().get_legend_handles_labels()
+        order = np.argsort(aucs)
+        line_labels = line_labels if line_labels else labels_auto  # use given labels if available
+        plt.legend([handles[idx] for idx in order], [line_labels[idx] for idx in order], title=f'{key}: AUC')
+    plt.tight_layout()
+    plt_save_close(output_path)
+
+
+def deletion_metric_per_pred(df_base, output_path=None, title=None, ranges=True, sort_aucs=True):
+    """ Plot Deletion metric by predicted class, """
+    del_scores = df_base['del_scores_pred'].values
+    preds = df_base['pred'].values
+    aucs = []
+    for i, label in enumerate(label_names):
+        y_pred_class = del_scores[preds == i]
+        if len(y_pred_class) == 0:
+            continue
+        y_pred_class = np.stack(y_pred_class)
+        mean_y = np.mean(y_pred_class, axis=0)
+        auc_mean = auc(mean_y)
+        aucs.append(auc_mean)
+        # plot mean + std
+        plt.plot(percentages_kept, mean_y, label=f'{label}: {auc_mean:.3f}')
+        if ranges:
+            std_y = np.std(y_pred_class, axis=0)
+            plt.fill_between(percentages_kept, mean_y - std_y, mean_y + std_y, alpha=0.2)
+    plt.xticks(percentages_kept)  # original x-values ticks
+    plt.gca().invert_xaxis()  # decreasing x axis
+    plt.ylim(0, 1.05)
+    plt.legend(title='predicted: AUC')
+    if sort_aucs:
+        handles, line_labels = plt.gca().get_legend_handles_labels()
+        order = np.argsort(aucs)
+        plt.legend([handles[idx] for idx in order], [line_labels[idx] for idx in order], title='predicted: AUC')
+
+    plt.xlabel('% pixels kept')
+    plt.ylabel('Prediction Score')
+    plt.title(f'Deletion Metric by Class' + title)
+    # remove top and right spines
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt_save_close(output_path)
+
+
+def rank_by_auc(df, columns):
+    return df.groupby(columns)['auc'].mean().sort_values(ascending=False)
 
 
 # def main():
 if __name__ == '__main__':
+    # global auc_percentages, percentages_kept  # only uncomment when using def main()
     """
     Process CAMs - perform analysis, visualize, and save plots.
     """
-
     ''' Arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
@@ -298,10 +372,8 @@ if __name__ == '__main__':
     cam_dir = dirname(args.files[0])
     path_list = args.files[0].split('/')  # assume common directory prefix for cam files
     run_dir = join(*path_list[:2])  # rebuild runs/<run_name>
-
     eval_dir = path_list[2]
-
-    # format to parse, hyphen-separated
+    # eval directory name format to parse, hyphen-separated:
     # 'eval', dataset_name, dataset_note [, attack], mode, limit_
     _, dataset_name, dataset_note, mode, *attack, limit_ = eval_dir.split('-')
     attack = attack[0] if len(attack) == 1 else None
@@ -309,9 +381,8 @@ if __name__ == '__main__':
     ''' Parse filenames '''
     # filenames example: cams_EigenCAM_20.pkl.gz
     # filenames pattern: cams_<method>_<limit>.pkl.gz
-
-    # read all limit strings from filenames
     filenames = [basename(f) for f in args.files]
+    # read all limit strings from filenames
     limits = set(f.split('_')[2].split('.')[0] for f in filenames)
     if len(limits) != 1:
         raise ValueError(f'Multiple different limits in filenames: {limits}')
@@ -332,11 +403,10 @@ if __name__ == '__main__':
     seed = args.seed if args.seed is not None else config.seed_eval_default  # 42
     init_seed(seed)
     sns.set_style('whitegrid')  # plotting params
+    plt.rcParams['axes.grid'] = True  # gridlines initially on
 
     ''' Load Dataset '''
     if True:
-        from dataset_base import pick_dataset_version, load_annotations
-
         # training_mode = config_dict['mode']  # 'all_attacks'
         # dataset_name = config_dict['dataset']  # 'rose_youtu'
         dataset_module = get_dataset_module(dataset_name)
@@ -345,25 +415,21 @@ if __name__ == '__main__':
         attack_val = dataset_meta['attack_val']
         attack_test = dataset_meta['attack_test']
         split = 'test'  # implicitly always working with unseen data
-        dataset_paths = load_annotations(dataset_meta, seed, args.path_prefix, limit)[split]
-        ds = dataset_module.Dataset(dataset_paths)
+        annotations = load_annotations(dataset_meta, seed, args.path_prefix, limit)[split]
+        ds = dataset_module.Dataset(annotations)
         bona_fide = dataset_module.bona_fide
         label_names = dataset_module.label_names_unified
         num_classes = dataset_meta['num_classes']
+        nums_to_names = dataset_module.nums_to_unified
         ''' Show labels distribution '''
-        show_labels_distribution(dataset_paths['label'], split, num_classes)
+        show_labels_distribution(annotations['label'], split, num_classes)
 
     ''' Metadata '''
     df['shp'] = df.cam.apply(lambda x: x.shape)
-    df = df.merge(dataset_paths, on='idx', how='inner', suffixes=('', '_y'))
-    df_sample = df.sample(10)
+    # add metadata from annonations file
+    df = df.merge(annotations, on='idx', how='inner', suffixes=('', '_y'))
 
-    nums_to_names = dataset_module.nums_to_unified
-    label_names = dataset_module.label_names_unified
-    idxs = df['idx'].values
-
-    # -------------------------------------------- vvv
-    # temporary: shapes of CAMs
+    # Check CAMs shapes
     if len(df.shp.unique()) != 1:
         raise ValueError(f'Different CAM shapes!\n{df.shp.value_counts()}')
     cam_shape = df.iloc[0]['shp']
@@ -372,31 +438,52 @@ if __name__ == '__main__':
     for g, rows in dg:
         print(f'{g}:\n', rows.method.value_counts())
 
-    # -------------------------------------------- ^^^
+    if len(dg) != 1:
+        filter_idxs = df.shp == cam_shape
+        print(f'Filtering CAMs to keep only the first shape {sum(filter_idxs)}/{len(filter_idxs)}.')
+        df = df[df.shp == cam_shape]
     print(f'CAM shape: {cam_shape}')
+
+    df_sample = df.sample(10)
+    dfcopy = df.copy()
+    # df = df_sample  # TODO TEMPORARY
+
+    ''' AUC for each CAM '''
+    percentages_kept = df['percentages_kept'].values[0]  # assume same for all
+    auc_percentages = np.array(percentages_kept) / 100  # normalize to [0, 1]
+    # deletion scores for predicted class
+    df['del_scores_pred'] = df.apply(lambda row: row.del_scores[:, row.pred], axis=1)
+    df['auc'] = df['del_scores_pred'].apply(auc)
+
+    df['correct'] = df['label'] == df['pred']
+    df.cam = df.cam.apply(lambda x: np.float32(x) / 255)  # from uint8 to [0, 1] float
+    df['cam_pred'] = df.apply(lambda row: row.cam[row.pred], axis=1)  # H x W
     cams = np.stack(df['cam'].values)
     labels = df['label'].values
     preds = df['pred'].values
+    idxs = df['idx'].values
     methods_unique = df['method'].unique()
+    baselines_unique = df['baseline'].unique()
+    sample_row = df.iloc[0]
+    sample_img = Image.open(sample_row.path)
+    img_shape = sample_img.size  # (W, H), assume same for all
+    landmarks = get_ref_landmarks()
     ###############################################################################
     ''' ------- Exploring CAMs ------- '''
-
-    ''' Compute AUC for each CAM '''
-    percentages_kept = df['percentages_kept'].values[0]  # assume same for all
-    auc_percentages = np.array(percentages_kept) / 100  # normalize to [0, 1]
-    df['auc'] = df['del_scores'].apply(auc)
+    # First plot charts, keep grid on. (Then turn it off for images)
+    plt.rcParams['axes.grid'] = True
 
     ''' Rank based on AUC '''
-    auc_methods_baseline_ranking = df[['method', 'baseline', 'auc']].groupby(['method', 'baseline']).mean().sort_values(
-        'auc', ascending=False)
-    auc_methods_ranking = df[['method', 'auc']].groupby(['method']).mean().sort_values('auc', ascending=False)
-    auc_baselines_ranking = df[['baseline', 'auc']].groupby(['baseline']).mean().sort_values('auc', ascending=False)
+
+    auc_methods_ranking = rank_by_auc(df, ['method'])
+    auc_baselines_ranking = rank_by_auc(df, ['baseline'])
+    auc_methods_baselines_ranking = rank_by_auc(df, ['method', 'baseline'])
+    print(auc_methods_ranking, '\n', auc_baselines_ranking, '\n', auc_methods_baselines_ranking)
+    ''' Does image blurriness matter? '''
+    laplacian_per_label_correct = df.groupby(['correct', 'label']).laplacian_var.mean()
 
     ''' Plot CAMs as used in the deletion metric. '''
     if False:
-        from PIL import Image
-        import cv2
-
         row = df[df['label'] == 3].iloc[42]
         method = row['method']
         pred_class = row['pred']
@@ -444,9 +531,8 @@ if __name__ == '__main__':
         plot_many(masks, title='masks', titles=percentages_kept)
 
         # showerthought: why do I compute the sobel edges for the full-size image?
-        # do it at the CAM size.
+        # do it at the CAM size. No, it really looks more credible for full-size.
         cam_wh = cam_pred_copy.shape
-        from util_image import sobel_edges
 
         sobel_full = sobel_edges(img)
         sobel_downsampled = cv2.resize(sobel_full, cam_wh, interpolation=cv2.INTER_AREA)
@@ -458,28 +544,49 @@ if __name__ == '__main__':
 
     ''' Landmarks '''
     if False:
-        from util_face import get_ref_landmarks
-
-        landmarks = get_ref_landmarks()
+        # sample image with reference landmarks
+        img = Image.open(df.iloc[0].path)
         plt.imshow(img)
         plt.scatter(landmarks[:, 0], landmarks[:, 1], s=1, c='r')
         plt.show()
 
-    # check if this gets moved to the left, as I paste in another snippet
+    ''' Does baseline choice matter? '''
     if False:
-        # for each method, plot worst and best CAMs, given by their AUC
-        for m in methods_unique:
-            df_m = df[df['method'] == m].copy()
-            df_m = df_m.sort_values('auc')  # ascending
-            k = 5
-            worst = df_m.head(k)
-            best = df_m.tail(k)
+        pass
+        # average AUC
+        # difference between del_scores across baselines
+
+    # check if this gets moved to the left, as I paste in another snippet
+    ''' Best and worst CAMs per method, ranked by AUC '''
+    if False:
+        key = 'method'
+        key_unique = df[key].unique()
+        n_samples = 5
+        for k_val in key_unique:
+            df_k = df[df[key] == k_val].copy()
+            df_k = df_k.sort_values('auc')  # ascending
+            worst = df_k.head(n_samples)
+            best = df_k.tail(n_samples)
             wb = pd.concat([worst, best], ignore_index=True)
             imgs = [Image.open(row['path']) for _, row in wb.iterrows()]
-            plot_many(imgs, titles=[f'{a:.3f}' for a in wb.auc])
+            imgs = [np.array(img, dtype=float) / 255 for img in imgs]
 
-            deletion_per_image(wb.del_scores, labels=[f'{r.idx}: {r.auc:.3f}' for _, r in wb.iterrows()],
-                               title=f'- {m}')
+            # keep only area highlighted by cam_pred
+            cam_pred_upsampled = wb.cam_pred.apply(lambda x: cv2.resize(x, img_shape))
+            cam_pred_upsampled = np.stack(cam_pred_upsampled, dtype=float) / 255
+            imgs_masked_by_cam = []
+            for im, cam in zip(imgs, cam_pred_upsampled):
+                masked = im * cam[..., None]
+                imgs_masked_by_cam.append(masked)
+
+            # plot_many(imgs, titles=[f'{a:.3f}' for a in wb.auc])
+            plot_many(imgs_masked_by_cam, titles=[f'{a:.3f}' for a in wb.auc], title=f'{key}: {k_val}')
+            # deletion_per_image(wb.del_scores, labels=[f'{r.idx}: {r.auc:.3f}' for _, r in wb.iterrows()], title=f'- {m}')
+
+    if False:
+        # best CAMs per class (within method)
+        for m in methods_unique:
+            pass
 
     ''' Plot CAMs for wrong predictions '''
     if False:
@@ -498,7 +605,7 @@ if __name__ == '__main__':
         # step 2: get all cams for this sample
         df_sample = df[df.idx == idx]
         methods = df_sample.method.values
-        cams = np.stack(df_sample.cam.values)
+        cams = np.stack(df_sample.cam.values)  # todo overwriting `cams` from above
         cams = cams[:, :, 0, ...]  # drop 1-channel dim  -- not generally applicable
         cam1 = cams[0]
         cam2 = cams[1]
@@ -530,93 +637,28 @@ if __name__ == '__main__':
     ''' Per-image Deletion Metric Plot'''
     if False:
         # Not used, since per-sample visualization is not practical for thousands of samples.
-        deletion_per_image(df.del_scores[:10], df.idx)
+        df10 = df[:10]
+        output_path = join(cam_dir, f'deletion_metric_samples.{ext}')
+        deletion_per_image(df10.del_scores, df10.idx, output_path=output_path)
 
     ''' Per-Method Deletion Metric Plot '''
     if True:
-        for m in methods_unique:
-            df_method = df[df.method == m]
-            del_scores = np.stack(df_method.del_scores.values)
-            ys = np.mean(del_scores, axis=0)
-            stds = np.std(del_scores, axis=0)
-            auc_mean = df.auc.mean()
-            plt.plot(percentages_kept, ys, '.-', label=f'{m}: {auc_mean:.3f}')
-            plt.fill_between(percentages_kept, ys - stds, ys + stds, alpha=0.2)
-
-        plt.title('Deletion Metric per Method')
-        plt.xlabel('% pixels kept')
-        plt.ylabel('Confidence')
-        plt.xticks(percentages_kept)  # original x-values ticks
-        plt.gca().invert_xaxis()  # decreasing x axis
-        plt.ylim(0, 1.05)
-        plt.legend(title='Method: AUC')
-        plt.tight_layout()
         output_path = join(cam_dir, f'deletion_metric_methods.{ext}')
-        if output_path is not None and not args.no_log:
-            plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
-        if args.show:
-            plt.show()
-        plt.close()
+        deletion_metric_per(df, 'method', output_path, ranges=True)
 
     ''' Per-class Deletion Metric Plot'''
-    if False and 'baseline' in df:
+    if False:
         """ 
-        Single method, subplot per baseline, plotting classes separately. 
+        1 plot per baseline, 1 line per class.  
         Compare ways of perturbing the image with different baselines.
         """
-        baselines_unique = df['baseline'].unique()
-
-        aucs = []
         for baseline in baselines_unique:
-            # x: perturbation level
-            # y: prediction drop
-            # hue: class
-            # baseline = df['baseline'].values[0]
             df_base = df[df.baseline == baseline]
-            y = df_base['del_scores'].values
-            preds = df_base['pred'].values
-            empty = []
-            for i, label in enumerate(label_names):
-                y_pred_class = y[preds == i]
-                if len(y_pred_class) == 0:
-                    empty.append(label)
-                    continue
+            output_path = join(cam_dir, f'deletion_metric_{baseline}_classes.{ext}')
+            deletion_metric_per_pred(df_base, output_path, f' - {baseline}', ranges=False, sort_aucs=False)
 
-                y_pred_class = np.stack(y_pred_class)
-                mean_y = np.mean(y_pred_class, axis=0)
-                std_y = np.std(y_pred_class, axis=0)
-                auc = np.trapz(mean_y, -auc_percentages)  # -xs because decreasing x-axis, but auc() assumes increasing
-                aucs.append({'baseline': baseline, 'class': label, 'auc': auc})
-                # plot mean + std
-                plt.plot(percentages_kept, mean_y, label=f'{label}: {auc:.3f}')
-                plt.fill_between(percentages_kept, mean_y - std_y, mean_y + std_y, alpha=0.2)
-
-            if len(empty):
-                print(f'Empty classes: {empty}')
-
-            plt.xticks(percentages_kept)  # original x-values ticks
-            plt.gca().invert_xaxis()  # decreasing x axis
-            plt.ylim(0, 1.05)
-            plt.legend(title='Class')
-            plt.ylabel('Prediction Score')
-            plt.xlabel('Perturbation Intensity (% of image kept)')
-            plt.title(f'Deletion Metric ({baseline}) by Class')
-
-            # remove top and right spines
-            plt.gca().spines['top'].set_visible(False)
-            plt.gca().spines['right'].set_visible(False)
-
-            plt.tight_layout()
-            output_path = join(cam_dir, f'deletion_metric_classes.{ext}')
-            if output_path and not args.no_log:
-                plt.savefig(output_path, pad_inches=0.1, bbox_inches='tight')
-            if args.show:
-                plt.show()
-            plt.close()
-
-        aucs_df = pd.DataFrame(aucs)
-        average_auc = aucs_df.groupby('baseline')['auc'].mean()
-        print(average_auc.sort_values(ascending=True))
+    # Plotting images, turn off grid
+    plt.rcParams['axes.grid'] = False
 
     ''' Per-image CAM - per-class heatmaps '''
     if False:
@@ -624,38 +666,36 @@ if __name__ == '__main__':
             s = ds[i]
             idx = s['idx']
             entries = df[df.idx == idx]
-            if entries.empty:
-                # when loading more methods, idx is not unique
-                print(f"dataset index {s['idx']} not found in df")
-                continue
-
-            for _, cam_entry in entries.iterrows():
+            for _, cam_entry in entries.iterrows():  # when loading more methods, idx is not unique
                 cam_method_name = cam_entry['method']
-                output_path = join(cam_dir, f'{cam_method_name}_{limit}_idx{idx}.{ext}')
+                output_path = join(cam_dir, f'{cam_method_name}_idx{idx}.{ext}')
                 plot2x3(cam_entry, s['image'], output_path, **{'vmin': 0, 'vmax': 255, 'cmap': 'viridis'})
+            else:
+                print(f"sample idx={s['idx']} not found in df")
 
     ''' Average CAM by predicted category '''
-    if False:
-        cams_pred = np.zeros(cam_shape)  # (c, h, w)
+
+
+    def cam_mean(cams, select):
+        cam = np.zeros(cam_shape)  # (c, h, w)
         # filter all RuntimeWarning
         with warnings.catch_warnings():
             warnings.filterwarnings(action='ignore')
             for i in range(len(label_names)):
-                cams_pred[i] = np.mean(cams[preds == i], axis=0)[i]
-        cams_pred[np.isnan(cams_pred)] = 0
+                cam[i] = np.mean(cams[select == i], axis=0)[i]
+        cam[np.isnan(cam)] = 0
+        return cam
 
+
+    cams_id = 'SampleID'
+    if False:
+        cams_pred = cam_mean(cams, preds)
         output_path = join(cam_dir, f'{cams_id}_avg_class_pred.{ext}')
         plot1x5(cams_pred, 'Average CAM per predicted class', output_path)
 
     ''' Average CAM by ground-truth category '''
     if False:
-        cams_gt = np.zeros(cam_shape)  # (c, h, w)
-        with warnings.catch_warnings():
-            warnings.filterwarnings(action='ignore')
-            for i in range(len(label_names)):
-                cams_gt[i] = np.mean(cams[labels == i], axis=0)[i]
-        cams_gt[np.isnan(cams_gt)] = 0
-
+        cams_gt = cam_mean_per(cams, labels)
         output_path = join(cam_dir, f'avg_class_label.{ext}')
         plot1x5(cams_gt, 'Average CAM per ground_truth class', output_path)
 
@@ -675,7 +715,7 @@ if __name__ == '__main__':
         plot5x5(cams_confmat, output_path)
 
     ''' Incorrect predictions: image, predicted and ground truth CAMs '''
-    n_incorrect = len(df[df["pred"] != df["label"]])
+    n_incorrect = len(df) - df.correct.sum()
     if False and n_incorrect > 0:
         print(f'Incorrect predictions: {n_incorrect} / {len(df)}')
         limit_incorrect = 20
@@ -739,14 +779,14 @@ if __name__ == '__main__':
         xs = cams_df.percentages_kept.iloc[0]
 
         fig, ax = plt.subplots(len(baselines), 1, figsize=(6, 10), sharex=True)
-        for k, base_name in enumerate(baselines):
-            ax[k].set_title(base_name)
+        for n_samples, base_name in enumerate(baselines):
+            ax[n_samples].set_title(base_name)
             cams_df_base = cams_df[cams_df.baseline == base_name]
             del_scores = np.stack(cams_df_base.del_scores.to_numpy())
             for i, c in enumerate(label_names):
                 idxs = cams_df_base.label == i
                 dsi = del_scores[idxs]
-                ax[k].plot(xs, dsi.mean(axis=0), label=c)
+                ax[n_samples].plot(xs, dsi.mean(axis=0), label=c)
 
         plt.ylabel('Score')
         plt.xlabel('% Pixels Kept')
