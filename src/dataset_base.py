@@ -13,8 +13,7 @@ import numpy as np
 
 
 # local
-import config
-
+# -
 class BaseDataset(Dataset):
     def __init__(self, annotations, transform=None):
         self.transform = transform
@@ -121,10 +120,12 @@ def pick_dataset_version(name, mode, attack=None, note=None):
     :param note: dataset variant (single sample, full dataset, etc.)
     :return: metadata pandas series
     """
+    from config import path_datasets_metadata
+
     if note is None:
         name, note = split_dataset_name(name)
 
-    datasets = pd.read_pickle(config.path_datasets_metadata)
+    datasets = pd.read_pickle(path_datasets_metadata)
     if attack is not None and mode == 'all_attacks':
         print(f'Ignoring attack number, training mode is: {mode}.')
         attack = None

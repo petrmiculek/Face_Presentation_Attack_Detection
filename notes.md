@@ -1,12 +1,21 @@
 commit 24.05. changed the layer freezing -- maybe frozen resnet didn't have any learnable layers before?
 
+# TODO Add this to the top of each file
+```python3
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+# TODO Describe this file
+"""
+Dataset Rose-Youtu
+
+"""
+```
+
 doing:
-
-
 * lime:
-    * just call it #DONE#
     * generate many
-
 * seed:
     * verify it is applied for the model weights (if not loading)
     * should it be used for lime? (image segmentation into superpixels)
@@ -15,21 +24,10 @@ doing:
 
 * compare explanations of two different models
 
-* changing paths to the dataset is tricky in:
-    * loading a dataset through the datasets.csv already says, where the dataset paths
-      are located. Even when changing the 'dataset_lists' path in dataset_base,
-      if the datasets.csv point to the original directory, nothing changes and old data paths are used.
-    * where are paths absolute and where relative: **TODO**
-        * dataset_base.py: dataset_lists
-        * dataset_split.py: dataset_root
-        * dataset_lists/datasets.csv ->
-        * dataset_lists/dataset_xyz.csv -> abs path to sample
+
 
 * many-run script can create run_x.sh files + finished files
 
-############################## HOT
-
-* input size of EfficientNet_v2_s is 384x384, whereas Resnet has 224x224
     * transforms=partial(
       ImageClassification,
       crop_size=384,
@@ -38,10 +36,8 @@ doing:
     * things work fine, it's just that the resizing might be doing some unnecessary work
     * what size are the input images originally?
 
-############################## HOT
-
-* pred_hwc_np uses F.softmax - is it correct? Why is it not used in the training? What comes out of the model?
-* Check EfficientNet embeddings.
+* pred_hwc_np uses F.softmax - is it correct? Yes.
+    Why is it not used in the training? What comes out of the model? Train with logits.
 
 * rose_youtu has 'Genuine', siw-m has 'Live'
 * siw-m
@@ -49,26 +45,15 @@ doing:
     * has no 'label_bin' attribute
 
 todo:
-
 * train with SIW-M dataset
 * dataset-independent train/eval
 * metriky: EER = equal error rate, HTER, AUC, XYZ@FRR10e-2
-* report real number of epochs trained + training time
-* training: one_attack, unseen_attack
-* one_attack training:
-    * check one-attack splitting in dataset_split (fill in "OK" table in dataset_split.py)
-    * regenerate one-attack datasets, with new attack splitting
-* script: run training on every category separately TODO
 
 unseen_attack training:
-
 * script: run for every category as unseen
-
 ideas:
-
-* train for longer to check if val will diverge
+* train for longer to check if val will diverge  #DONE#
 * follow the evaluation protocol of SIW-M
-
 * rethinking classes:
     * adapting rose_youtu #DONE#
         * train again on metacentrum #DONE#
@@ -85,20 +70,16 @@ ideas:
       'Video',
       'Mask',
       'Other'
-
 note:
-
-* val == test for unseen_attack
 * no bbox faces from siw-m excluded from training, could be used for extra human eval
 * dataset was cropped by resizing the bbox to a square (as opposed to keeping the original aspect ratio)
 * you're also explaining the code - mention the use-cases and give short script descriptions
 * slowing down training: images in original size, many small files (h5)
-* 2023-03-21: changed 'label_num' to 'label_unif', all newer models are not comparable
 * default parameters for model architecture hide intent
+* 2023-03-21: changed 'label_num' to 'label_unif', all newer models are not comparable
 
 #DONE# #DONE# #DONE#
 done:
-
 * save config to json #DONE#
 * read SIW-M dataset #DONE#
 * random dataset creation for every run hurts correct/valid/repeatable evaluation and verification later #DONE#
@@ -151,6 +132,11 @@ done:
 * augmentations  #DONE#
 * gradient accummulation  #DONE#
 * before running mass-generation of explanations, the evaluate-script needs argparsing #DONE#
+* report real number of epochs trained + training time  #DONE#
+* training: one_attack, unseen_attack  #DONE#
+* one_attack training:  #DONE#
+    * check one-attack splitting in dataset_split (fill in "OK" table in dataset_split.py)  #DONE#
+    * regenerate one-attack datasets, with new attack splitting  #DONE#
 
 #DONE# #DONE# #DONE#
 

@@ -248,7 +248,8 @@ if __name__ == '__main__':
 
         ''' Validation loop '''
         model.eval()
-        _, labels_val, preds_val, ep_loss_val = eval_loop(model, val_loader, criterions[key], device, f'ep{epoch} val')
+        _, labels_val, preds_val, probs_val, ep_loss_val = eval_loop(model, val_loader, criterions[key], device,
+                                                                     f'ep{epoch} val')
         metrics_val = compute_metrics(labels_val, preds_val)
         # log results
         res_epoch = {'Loss Training': ep_train_loss,
@@ -290,7 +291,7 @@ if __name__ == '__main__':
     ''' Test set evaluation '''
     model.eval()
     # end of test loop
-    _, labels_test, preds_test, loss_test = eval_loop(model, test_loader, criterions[key], device, 'Test')
+    _, labels_test, preds_test, _, loss_test = eval_loop(model, test_loader, criterions[key], device, 'Test')
     metrics_test = compute_metrics(labels_test, preds_test)
     ''' Log results '''
     print(f'\nLoss Test  : {loss_test:06.4f}')

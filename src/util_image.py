@@ -64,6 +64,7 @@ def sobel_edges(img):
     :return: np array float32, WxHx3
     """
     # grayscale, blur, sobel (x + y), sum, normalize
+    img = img.astype(np.float32)
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     img = cv2.GaussianBlur(img, (3, 3), 0)
@@ -137,7 +138,7 @@ class CircleFakeCAM:
         return expl
 
 
-def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwargs):
+def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, rows=None, **kwargs):
     """
     Plot multiple images in a grid.
 
@@ -146,6 +147,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
     :param titles: per-image titles
     :param output_path: save figure to this path if not None
     :param show: toggle showing the figure
+    :param rows: number of rows in the grid (if None, automatically determined)
     :param kwargs: keyword arguments for imshow
     """
     from torch import Tensor as torch_tensor
@@ -158,9 +160,12 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
         imgs = imgs[0]
     imgs = list(imgs)  # if tuple, convert to list
     total = len(imgs)
-    rows = 1 if total < 4 else int(np.ceil(np.sqrt(total)))
-    cols = int(np.ceil(total / rows))
-    rows, cols = min(rows, cols), max(rows, cols)
+    if rows is None:  # determine number of rows automatically
+        rows = 1 if total < 4 else int(np.ceil(np.sqrt(total)))
+        cols = int(np.ceil(total / rows))
+        rows, cols = min(rows, cols), max(rows, cols)
+    else:
+        cols = int(np.ceil(total / rows))
 
     fig, ax = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows))
 
@@ -196,7 +201,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, **kwa
         if titles is not None and i < len(titles):
             ax_i.set_title(titles[i])
 
-    plt.tight_layout(pad=0.5)
+    plt.tight_layout()  # pad=0.5
     if output_path is not None:
         plt.savefig(output_path, bbox_inches='tight', pad_inches=0.0)
     if show:
@@ -209,7 +214,7 @@ def get_marker(idx=None):
     from random import randint
     markers = ['o', 's', 'v', '^', 'D', 'P', 'X', 'h', 'd', 'p', 'H', '8', '>', '<', '*', 'x', 'o', 's', 'v', '^', 'D',
                'P', 'X', 'h', 'd', 'p', 'H', '8', '>', '<', '*', 'x']
-    if idx is None:
+    if idx is None or not isinstance(idx, int):
         idx = randint(0, len(markers))
 
     return markers[idx % len(markers)]

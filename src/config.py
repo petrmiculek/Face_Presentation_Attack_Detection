@@ -24,8 +24,10 @@ blur_cam_s = int(384 // 2) + 1  # == 193; 384 is the size of the input image; = 
 # blurring input image
 blur_img_s = 29  # empirically found to drop prediction confidence below chance level; odd number
 
+cam_blurred_weight = 0.5  # weight of the blurred CAM mask in the final mask
+
 # Deletion Metric - percentage of pixels kept in the mask
-percentages_kept = [100, 90, 70, 50, 30, 10, 0]
+percentages_kept = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 0]  # before: [100, 90, 70, 50, 30, 10, 0]
 
 # -----------------------
 # Paths

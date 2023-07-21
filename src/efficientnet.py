@@ -57,6 +57,14 @@ class EfficientNet(EfficientNetBase):
 
     forward = forward_multiclass  # default forward function
 
+    def forward_rose(self, x):
+        """ Forward pass for multi-class classification into RoseYoutu classes (8). """
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        y_rose = self.classifier_rose(x)
+        return y_rose
+
     def switch_to_binary(self):
         self.forward = self.forward_binary
         print('Model default predict switched to binary')
@@ -64,6 +72,10 @@ class EfficientNet(EfficientNetBase):
     def switch_to_multiclass(self):
         self.forward = self.forward_multiclass
         print('Model default predict switched to multiclass')
+
+    def switch_to_rose(self):
+        self.forward = self.forward_rose
+        print('Model default predict switched to rose')
 
 
 def _efficientnet(

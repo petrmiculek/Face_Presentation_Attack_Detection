@@ -2,23 +2,16 @@
 Resnet implementation taken from torchvision
 Source: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py
 
-
+Own code is marked with OWN CODE comments:
+    - Added new classification heads
 """
 
-from functools import partial
 from typing import Optional, Union, Dict, Any, Type, List, Callable, TypeVar, Tuple
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
-# from ..transforms._presets import ImageClassification
-# from ..utils import _log_api_usage_once
-# from ._api import register_model, Weights, WeightsEnum
-# from ._meta import _IMAGENET_CATEGORIES
-# from ._utils import _ovewrite_named_param, handle_legacy_interface
-
-# W = TypeVar("W", bound=WeightsEnum)
 M = TypeVar("M", bound=nn.Module)
 V = TypeVar("V")
 
@@ -29,32 +22,6 @@ def _ovewrite_named_param(kwargs: Dict[str, Any], param: str, new_value: V) -> N
             raise ValueError(f"The parameter '{param}' expected value {new_value} but got {kwargs[param]} instead.")
     else:
         kwargs[param] = new_value
-
-
-#
-# __all__ = [
-#     "ResNet",
-#     "ResNet18_Weights",
-#     "ResNet34_Weights",
-#     "ResNet50_Weights",
-#     "ResNet101_Weights",
-#     "ResNet152_Weights",
-#     "ResNeXt50_32X4D_Weights",
-#     "ResNeXt101_32X8D_Weights",
-#     "ResNeXt101_64X4D_Weights",
-#     "Wide_ResNet50_2_Weights",
-#     "Wide_ResNet101_2_Weights",
-#     "resnet18",
-#     "resnet34",
-#     "resnet50",
-#     "resnet101",
-#     "resnet152",
-#     "resnext50_32x4d",
-#     "resnext101_32x8d",
-#     "resnext101_64x4d",
-#     "wide_resnet50_2",
-#     "wide_resnet101_2",
-# ]
 
 # Taken from torchvision.
 def resnet18(*, weights=None, progress: bool = True, weight_class,  **kwargs: Any):
@@ -250,10 +217,11 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512, 1000)  # dummy for weights loading
-        ''' Create custom classifier heads '''
+        ''' 0WN CODE 1/2: Create custom classifier heads '''
         self.fc_binary = nn.Linear(512, 2)
         self.fc_multiclass = nn.Linear(512, 5)
         self.fc_rose = nn.Linear(512, 8)
+        """ OWN CODE 1/2 END """
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -313,9 +281,11 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    # not necessary if forward hooks are used
+    ''' 0WN CODE 2/2: Custom classifier heads + forward passes '''
+
     def fw_with_emb(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """ Return prediction and embedding """
+        # custom forward pass is not necessary if forward hooks are used
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -330,7 +300,7 @@ class ResNet(nn.Module):
         return y, x
 
     def forward_train(self, x: Tensor) -> Dict[str, Tensor]:
-        """ Return prediction and embedding """
+        """ Return predictions for all tasks """
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -348,6 +318,7 @@ class ResNet(nn.Module):
         return {'bin': y_binary, 'unif': y_multiclass, 'orig': y_rose}
 
     def forward_multiclass(self, x):
+        """ Return predictions for multi-class (5) classification """
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -364,6 +335,7 @@ class ResNet(nn.Module):
     forward = forward_multiclass  # default forward function
 
     def forward_binary(self, x):
+        """ Return predictions for binary (2) classification """
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -377,6 +349,21 @@ class ResNet(nn.Module):
         y_binary = self.fc_binary(x)
         return y_binary
 
+    def forward_rose(self, x):
+        """ Return predictions for multi-class (8) classification """
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)  # embedding
+        y_rose = self.fc_rose(x)
+        return y_rose
+
     def switch_to_binary(self):
         self.forward = self.forward_binary
         print('Model default predict switched to binary')
@@ -385,6 +372,11 @@ class ResNet(nn.Module):
         self.forward = self.forward_multiclass
         print('Model default predict switched to multiclass')
 
+    def switch_to_rose(self):
+        self.forward = self.forward_rose
+        print('Model default predict switched to rose')
+
+    """ OWN CODE 2/2 END """
 
 def _resnet(
         block: Type[Union[BasicBlock, Bottleneck]],

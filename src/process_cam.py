@@ -55,17 +55,17 @@ pil_logger.setLevel(logging.INFO)
 # local
 import config
 from dataset_base import show_labels_distribution
-from util_image import overlay_cam, get_marker
+from util_image import overlay_cam, get_marker, plot_many
 from util_torch import init_seed, get_dataset_module
 
 ''' Global variables '''
 run_dir = ''
 nums_to_names = None
 label_names = None
-# show_plots = False
 args = None
 cam_dir = None
 ext = 'png'  # extension for saving plots
+percentages_kept = None  # deletion metric percentages [0, 100]
 
 parser = argparse.ArgumentParser()  # description='Process CAMs'
 parser.add_argument('-r', '--run', help='model/dataset/settings to load (run directory)', type=str, default=None)
@@ -77,45 +77,53 @@ parser.add_argument('-p', '--path_prefix', help='path to dataset')
 parser.add_argument('-f', '--files', help='path(s) to CAMs', type=str, nargs='+')
 
 
-def read_cams(paths):
+def read_cams(paths, path_prefix=None):
     """ Read pickled CAM DataFrame/s. """
-    df_ = None
+    df = None
     if isinstance(paths, str):
-        df_ = pd.read_pickle(paths)
-    elif isinstance(paths, list):
-        # merge dataframes
-        lens = []
-        for p in tqdm(paths):
-            try:
-                df_tmp = pd.read_pickle(p)
-                source = basename(p)
-                df_tmp['path'] = df_tmp['path'].apply(basename)
-                df_tmp['source'] = source  # broadcast to all rows
-                print(f'Loading {source}, shape: {df_tmp.shape}')
-                if df_ is None:
-                    df_ = df_tmp
-                    lens.append(len(df_tmp))
-                    continue
-                ''' Check for overlapping lines by: idx, method '''
-                intersection = df_tmp.merge(df_, on=['idx', 'method'], how='inner')
-                if not intersection.empty:
-                    print(f'Warning: {source} intersects with: {intersection["file_y"].unique()}')
-                ''' Check for conflicting attributes - label, pred '''
-                conflicting = (intersection['label_x'] != intersection['label_y']) | \
-                              (intersection['pred_x'] != intersection['pred_y'])
-                if any(conflicting):
-                    print(f'Warning: {source} and {intersection["file"].iloc[0]} have conflicting labels/preds')
+        paths = [paths]
+
+    if not isinstance(paths, list):
+        raise ValueError(f'Invalid paths: {paths}')
+
+    # concatenate dataframes
+    lens = []
+    for path in tqdm(paths):
+        try:
+            df_tmp = pd.read_pickle(path)
+            source = basename(path)
+            df_tmp['source'] = source  # broadcast to all rows
+
+            print(f'Loading {source}, shape: {df_tmp.shape}')
+            if df is None:
+                df = df_tmp
                 lens.append(len(df_tmp))
-
-                df_ = pd.concat([df_, df_tmp], ignore_index=True)
-            except Exception as e:
-                print(e)
                 continue
+            ''' Check for overlapping lines by: idx, method '''
+            intersection = df_tmp.merge(df, on=['idx', 'method'], how='inner')
+            if not intersection.empty:
+                print(f'Warning: {source} intersects with: {intersection["file_y"].unique()}')
+            ''' Check for conflicting attributes - label, pred '''
+            conflicting = (intersection['label_x'] != intersection['label_y']) | \
+                          (intersection['pred_x'] != intersection['pred_y'])
+            if any(conflicting):
+                print(f'Warning: {source} and {intersection["file"].iloc[0]} have conflicting labels/preds')
+            lens.append(len(df_tmp))
 
-        print(
-            f'Merged {len(lens)}/{len(paths)} dataframes, total shape: {df_.shape}, original lengths: {lens} -> {sum(lens)}')
+            df = pd.concat([df, df_tmp], ignore_index=True)
+        except Exception as e:
+            print(e)
+            continue
 
-    return df_
+    print(f'Merged {len(lens)}/{len(paths)} dataframes, total shape: {df.shape}, '
+          f'original lengths: {lens} -> {sum(lens)}')
+
+    ''' Change paths to images '''
+    df['path'] = df['path'].apply(basename)
+    if path_prefix is not None:
+        df['path'] = df['path'].apply(lambda x: join(path_prefix, x))
+
+    return df
 
 
 def plot1x5(cams, title='', output_path=None):
@@ -224,25 +232,28 @@ def plot5x5(cams, output_path=None):
     plt.close(fig)
 
 
-def deletion_per_image(df, many_ok=False):
+def deletion_per_image(del_scores, labels=None, x=None, many_ok=False):
     global args, cam_dir, ext, percentages_kept
     # x: perturbation level
     # y: prediction drop
-    if len(df) > 200 and not many_ok:
+    if len(del_scores) > 200 and not many_ok:
         print(f'deletion_per_image: too many {len(df)} samples, '
               f'override by `many_ok` to run anyway.')
+        return
+    if x is None:
+        x = percentages_kept
 
-    y = df['del_scores'].values
-    idxs = df['idx'].values
     plt.figure(figsize=(6, 4))
-    for i, scores_line in enumerate(y):
-        sample_idx = idxs[i]
-        marker_random = get_marker(sample_idx)
-        plt.plot(percentages_kept, scores_line, label=sample_idx, marker=marker_random)
-    plt.xticks(percentages_kept)  # original x-values ticks
+    for i, scores_line in enumerate(del_scores):
+        kwargs = {}
+        if labels is not None and len(labels) > i:
+            kwargs = {'label': labels[i], 'marker': get_marker(labels[i])}
+        plt.plot(x, scores_line, **kwargs)
+    plt.xticks(x)  # original x-values ticks
     plt.gca().invert_xaxis()  # decreasing x axis
     plt.ylim(0, 1.05)
-    # plt.legend(title='Sample ID')  # too long for per-sample legend
+    if len(del_scores) < 10:  # otherwise too many labels
+        plt.legend()
     plt.ylabel('Prediction Score')
     plt.xlabel('Perturbation Intensity (% of image kept)')
     plt.title('Deletion Metric')
@@ -256,7 +267,14 @@ def deletion_per_image(df, many_ok=False):
     if args.show:
         plt.show()
     plt.close()
-    return percentages_kept
+
+
+def auc(deletion_scores, percentages=None):
+    """ Compute the Area under Curve (AUC) for a given deletion curve. """
+    if percentages is None:
+        percentages = auc_percentages
+    auc_ = np.trapz(deletion_scores, -percentages)
+    return auc_
 
 
 # def main():
@@ -264,6 +282,8 @@ if __name__ == '__main__':
     """
     Process CAMs - perform analysis, visualize, and save plots.
     """
+
+    ''' Arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
@@ -296,34 +316,30 @@ if __name__ == '__main__':
     if len(limits) != 1:
         raise ValueError(f'Multiple different limits in filenames: {limits}')
 
-    methods = [f.split('_')[1] for f in filenames]
+    methods_filenames = [f.split('_')[1] for f in filenames]
     limit = limits.pop()  # only one in the set (which can also be destroyed)
     limit = -1 if limit == 'all' else int(limit)
 
     ''' Load CAMs '''
-    df = read_cams(args.files)
-
+    df = read_cams(args.files, args.path_prefix)
+    df_orig = df.copy()
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
     print('Loading model and setup from:', run_dir)
 
-    ''' Arguments '''
-    # training_mode = config_dict['mode']  # 'all_attacks'
-    # dataset_name = config_dict['dataset']  # 'rose_youtu'
-    dataset_module = get_dataset_module(dataset_name)
-
     ''' Initialization '''
     seed = args.seed if args.seed is not None else config.seed_eval_default  # 42
     init_seed(seed)
-
-    # plotting params
-    sns.set_style('whitegrid')  # seaborn set style
+    sns.set_style('whitegrid')  # plotting params
 
     ''' Load Dataset '''
     if True:
         from dataset_base import pick_dataset_version, load_annotations
 
+        # training_mode = config_dict['mode']  # 'all_attacks'
+        # dataset_name = config_dict['dataset']  # 'rose_youtu'
+        dataset_module = get_dataset_module(dataset_name)
         dataset_meta = pick_dataset_version(dataset_name, mode, attack, dataset_note)
         attack_train = dataset_meta['attack_train']
         attack_val = dataset_meta['attack_val']
@@ -337,41 +353,127 @@ if __name__ == '__main__':
         ''' Show labels distribution '''
         show_labels_distribution(dataset_paths['label'], split, num_classes)
 
-    t0 = time.perf_counter()
+    ''' Metadata '''
+    df['shp'] = df.cam.apply(lambda x: x.shape)
+    df = df.merge(dataset_paths, on='idx', how='inner', suffixes=('', '_y'))
+    df_sample = df.sample(10)
 
-    ###############################################################################
-    ''' Exploring CAMs '''
     nums_to_names = dataset_module.nums_to_unified
     label_names = dataset_module.label_names_unified
     idxs = df['idx'].values
 
     # -------------------------------------------- vvv
     # temporary: shapes of CAMs
-    # cam_shape = (5, 1, 7, 7)  # temporary
-    shp = lambda x: x.shape
-    df['shp'] = df.cam.apply(shp)
-    shape_value_counts = df.shp.value_counts()
     if len(df.shp.unique()) != 1:
-        print('Warning: different CAM shapes!\n', shape_value_counts)
-    cam_shape = df['cam'].values[0].shape
+        raise ValueError(f'Different CAM shapes!\n{df.shp.value_counts()}')
+    cam_shape = df.iloc[0]['shp']
     dg = df[['method', 'shp']].groupby('shp')
+    # which shapes are there for which methods?
     for g, rows in dg:
-        print(g, rows.method.value_counts())
+        print(f'{g}:\n', rows.method.value_counts())
 
-    df_orig = df.copy()
-    df = df[df['shape'] == (5, 1, 7, 7)]
     # -------------------------------------------- ^^^
     print(f'CAM shape: {cam_shape}')
     cams = np.stack(df['cam'].values)
     labels = df['label'].values
     preds = df['pred'].values
+    methods_unique = df['method'].unique()
+    ###############################################################################
+    ''' ------- Exploring CAMs ------- '''
+
+    ''' Compute AUC for each CAM '''
     percentages_kept = df['percentages_kept'].values[0]  # assume same for all
     auc_percentages = np.array(percentages_kept) / 100  # normalize to [0, 1]
+    df['auc'] = df['del_scores'].apply(auc)
+
+    ''' Rank based on AUC '''
+    auc_methods_baseline_ranking = df[['method', 'baseline', 'auc']].groupby(['method', 'baseline']).mean().sort_values(
+        'auc', ascending=False)
+    auc_methods_ranking = df[['method', 'auc']].groupby(['method']).mean().sort_values('auc', ascending=False)
+    auc_baselines_ranking = df[['baseline', 'auc']].groupby(['baseline']).mean().sort_values('auc', ascending=False)
+
+    ''' Plot CAM as used in the deletion metric. '''
+    if False:
+        from PIL import Image
+        import cv2
+
+        row = df[df['label'] == 3].iloc[42]
+        method = row['method']
+        pred_class = row['pred']
+        cam_pred = (row['cam'][pred_class][0]).astype(float) / 255  # -> H x W = 12, 12
+        cam_pred_copy = cam_pred.copy()
+        img_pil = Image.open(join(args.path_prefix, row['path']))
+        img = np.array(img_pil, dtype=float) / 255  # HWC
+        # resize to original image size
+        wh_image = (img.shape[0], img.shape[1])
+        if cam_pred.shape != wh_image:
+            cam_pred = cv2.resize(cam_pred, wh_image)  # interpolation bilinear by default
+
+        ''' Perturbation baselines '''
+        b_black = np.zeros_like(cam_pred)
+        b_blur = np.dstack(  # here dstack for HWC
+            [cv2.blur(img[..., c], (config.blur_img_s, config.blur_img_s)) for c in range(3)])
+        b_mean = np.zeros_like(img) + np.mean(img, axis=(0, 1), keepdims=True)
+        b_blurdark = (b_black[..., None] + b_blur) / 4
+        plot_many([img, b_black, b_blur, b_mean, b_blurdark], title='Perturbation baselines',
+                  titles=['image', 'black', 'blur', 'mean', 'blurdark'])
+
+        plot_many([img, cam_pred_copy, cam_pred], title=f'{row.idx} {method}',
+                  titles=['image', 'CAM', 'CAM upsampled to image'])
+        # low and high resolution
+        ''' Perturb explained region '''
+        cam_blur_weight = 1
+        cam_blurred = cam_pred + cam_blur_weight * cv2.blur(cam_pred, (config.blur_cam_s, config.blur_cam_s))
+        thresholds = np.percentile(cam_blurred, percentages_kept)
+        thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
+
+        plot_many([cam_pred, cam_blurred], titles=['cam_pred', 'cam_blurred'])
+
+        baseline_name = row['baseline']
+        baseline = b_mean
+        imgs_perturbed = []
+        masks = []
+        for th, pct in zip(thresholds, percentages_kept):
+            mask = (cam_blurred < th)[..., None]
+            img_masked = (img * mask + (1 - mask) * baseline)
+            # img_masked_plotting = img_plotting * mask.cpu().numpy()
+            imgs_perturbed.append(img_masked)
+            masks.append(mask)
+
+        plot_many(imgs_perturbed, titles=percentages_kept, title=f'{cam_blur_weight=}')
+        plot_many(masks, title='masks', titles=percentages_kept)
+
+        # showerthought: why do I compute the sobel edges for the full-size image?
+        # do it at the CAM size.
+        cam_wh = cam_pred_copy.shape
+        from util_image import sobel_edges
+
+        sobel_full = sobel_edges(img)
+        sobel_downsampled = cv2.resize(sobel_full, cam_wh, interpolation=cv2.INTER_AREA)
+
+        img_camsized = cv2.resize(img, cam_wh)
+        sobel_camsized = sobel_edges(img_camsized)
+
+        plot_many([img, sobel_full, img_camsized, sobel_camsized, sobel_downsampled])
+
+    # todo: load landmarks
+
+    # check if this gets moved to the left, as I paste in another snippet
+    if False:
+        # for each method, plot worst and best CAMs, given by their AUC
+        for m in methods:
+            df_m = df[df['method'] == m].copy()
+            df_m = df_m.sort_values('auc')  # ascending
+            k = 5
+            worst = df_m.head(k)
+            best = df_m.tail(k)
+
+    ''' Plot CAMs for wrong predictions '''
+    if False:
+        pass
 
     ''' Across-method correlation '''
     if False:
-        # todo `df` was filtered down, fyi
-        from util_image import plot_many
         from scipy.stats import pearsonr, spearmanr
 
         # step 1: single sample
@@ -414,18 +516,17 @@ if __name__ == '__main__':
     ''' Per-image Deletion Metric Plot'''
     if False:
         # Not used, since per-sample visualization is not practical for thousands of samples.
-        percentages_kept = deletion_per_image(df)
+        deletion_per_image(df.del_scores[:10], df.idx)
 
     ''' Per-Method Deletion Metric Plot '''
     if True:
-        methods_unique = df.method.unique()
         for m in methods_unique:
             df_method = df[df.method == m]
             del_scores = np.stack(df_method.del_scores.values)
             ys = np.mean(del_scores, axis=0)
             stds = np.std(del_scores, axis=0)
-            auc = np.trapz(ys, -auc_percentages)
-            plt.plot(percentages_kept, ys, '.-', label=f'{m}: {auc:.3f}')
+            auc_mean = df.auc.mean()
+            plt.plot(percentages_kept, ys, '.-', label=f'{m}: {auc_mean:.3f}')
             plt.fill_between(percentages_kept, ys - stds, ys + stds, alpha=0.2)
 
         plt.title('Deletion Metric per Method')
@@ -563,10 +664,16 @@ if __name__ == '__main__':
     n_incorrect = len(df[df["pred"] != df["label"]])
     if False and n_incorrect > 0:
         print(f'Incorrect predictions: {n_incorrect} / {len(df)}')
-
+        limit_incorrect = 20
+        if n_incorrect > limit_incorrect:
+            print(f'Too many incorrect predictions to plot, limiting to {limit_incorrect}')
+        n_plotted = 0
         for i, row in df.iterrows():
             if row['pred'] == row['label']:
                 continue
+            if n_plotted >= limit_incorrect:
+                break
+            n_plotted += 1
             idx = row['idx']
             s = ds[idx]
             img = s['image']
@@ -609,3 +716,31 @@ if __name__ == '__main__':
     # not now
     ''' Difference between predicted and ground truth category, per class '''
     # not now
+
+    # unused - copied from evaluate.py
+    if False:
+        cams_df = None
+        # plot deletion scores per-baseline
+        baselines = cams_df.baseline.unique()
+        xs = cams_df.percentages_kept.iloc[0]
+
+        fig, ax = plt.subplots(len(baselines), 1, figsize=(6, 10), sharex=True)
+        for k, base_name in enumerate(baselines):
+            ax[k].set_title(base_name)
+            cams_df_base = cams_df[cams_df.baseline == base_name]
+            del_scores = np.stack(cams_df_base.del_scores.to_numpy())
+            for i, c in enumerate(label_names):
+                idxs = cams_df_base.label == i
+                dsi = del_scores[idxs]
+                ax[k].plot(xs, dsi.mean(axis=0), label=c)
+
+        plt.ylabel('Score')
+        plt.xlabel('% Pixels Kept')
+        plt.suptitle('Deletion Scores per Baseline')
+        plt.gca().invert_xaxis()  # reverse x-axis
+        # add minor y ticks
+
+        # figure legend out right top
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        plt.tight_layout()
+        plt.show()

@@ -13,27 +13,27 @@ from torchvision.models import EfficientNet_V2_S_Weights  # unused: efficientnet
 
 from tqdm import tqdm
 
-from efficientnet_v2_s import efficientnet_v2_s
+from efficientnet import efficientnet_v2_s
 # local
 from resnet18 import resnet18
 from augmentation import ClassificationPresetTrain, ClassificationPresetEval
 
 
-def load_model(model_name, num_classes, freeze_backbone=False):
+def load_model(model_name, num_classes, freeze_backbone=False, pretrained=True):
     """ Load model, replace classification head, maybe freeze backbone. """
 
     if model_name == 'resnet18':
         # load model with pretrained weights
-        weights = ResNet18_Weights.IMAGENET1K_V1
-        model = resnet18(weights=weights, weight_class=ResNet18_Weights)
-        # replace last layer with n-ary classification head
-        transforms_orig = weights.transforms()
+        kwargs = {'weights': ResNet18_Weights.IMAGENET1K_V1,
+                  'weight_class': ResNet18_Weights} if pretrained else {}
+        model = resnet18(**kwargs)
+        transforms_orig = ResNet18_Weights.IMAGENET1K_V1.transforms()
 
     elif model_name == 'efficientnet_v2_s':
-        weights = EfficientNet_V2_S_Weights.IMAGENET1K_V1
-        model = efficientnet_v2_s(weights=weights,
-                                  weight_class=EfficientNet_V2_S_Weights)
-        transforms_orig = weights.transforms()
+        kwargs = {'weights': EfficientNet_V2_S_Weights.IMAGENET1K_V1,
+                  'weight_class': EfficientNet_V2_S_Weights} if pretrained else {}
+        model = efficientnet_v2_s(**kwargs)
+        transforms_orig = EfficientNet_V2_S_Weights.IMAGENET1K_V1.transforms()
     else:
         raise ValueError(f'Unknown model name {model_name}')
     ''' Set model to binary or multiclass '''
@@ -60,25 +60,26 @@ def load_model(model_name, num_classes, freeze_backbone=False):
 
     ''' Freeze backbone parameters '''
     if freeze_backbone:
+        # Important: adapted layers variable names must contain 'fc' or 'classifier'!
         layer_to_unfreeze = ''
         if model_name == 'resnet18':
             layer_to_unfreeze = 'fc'
         elif model_name == 'efficientnet_v2_s':
-            layer_to_unfreeze = 'classifier'  # or features.7
+            layer_to_unfreeze = 'classifier'
 
-        # print('Note: Currently not freezing any layers')
         for name, param in model.named_parameters():
             if layer_to_unfreeze not in name:
                 param.requires_grad = False
             else:
                 param.requires_grad = True
             print(name, param.requires_grad)
+    else:
+        print('Model: Not freezing any layers')
 
     ''' Preprocessing and Augmentations '''
     crop_size = transforms_orig.crop_size[0]
     resize_size = transforms_orig.resize_size[0]
-    transform_train = ClassificationPresetTrain(auto_augment_policy='ta_wide', random_erase_prob=0.5,
-                                                crop_size=crop_size)
+    transform_train = ClassificationPresetTrain(auto_augment_policy='ta_wide', crop_size=crop_size)
     transform_eval = ClassificationPresetEval(crop_size=crop_size, resize_size=resize_size)
     preprocess = {
         'crop_size': crop_size,
@@ -93,9 +94,36 @@ def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
     """ Load Model """
     import config
 
-    model_name = model_name
     model, preprocess = load_model(model_name, num_classes)
-    model.load_state_dict(torch.load(join(run_dir, 'model_checkpoint.pt'), map_location=device), strict=False)
+    weights = torch.load(join(run_dir, 'model_checkpoint.pt'), map_location=device)
+    try:
+        loading_info = model.load_state_dict(weights, strict=False)
+    except RuntimeError as e:
+        ''' Old model weights will fail here, but can still be adapted :) '''
+        # Adapt classifier layer to new number of classes
+        if model_name == 'resnet18' and model.fc.out_features != num_classes:
+            model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
+        elif model_name == 'efficientnet_v2_s' and model.classifier[1].out_features != num_classes:
+            model.classifier[1] = torch.nn.Linear(model.classifier[1].in_features, num_classes)
+
+        # Load weights again
+        loading_info = model.load_state_dict(weights, strict=False)
+
+        # Put classifier layer where it is expected by the new model code.
+        if model_name == 'efficientnet_v2_s':
+            if num_classes == 2:
+                model.classifier_binary = model.classifier
+            else:
+                model.classifier_multiclass = model.classifier
+        elif model_name == 'resnet18':
+            if num_classes == 2:
+                model.fc_binary = model.fc
+            else:
+                model.fc_multiclass = model.fc
+
+    print(f'Loaded model weights from: {run_dir}')
+    print(f'Loading info: {loading_info}')
+
     model.to(device)
     model.eval()
     # sample model prediction
@@ -189,7 +217,7 @@ def eval_loop(model, loader, criterion, device, desc='Eval'):
     """ Evaluate model on dataset. """
     len_loader = len(loader)
     ep_loss = 0.0
-    preds, labels, paths = [], [], []
+    paths, labels, preds, probs = [], [], [], []
     with torch.no_grad():
         pbar = tqdm(loader, mininterval=1., desc=desc)
         for sample in pbar:
@@ -200,6 +228,7 @@ def eval_loop(model, loader, criterion, device, desc='Eval'):
             out = model(img)
             loss = criterion(out, label)
             ep_loss += loss.item()
+            probs.append(F.softmax(out, dim=1).cpu().numpy())
             prediction_hard = torch.argmax(out, dim=1).cpu().numpy()
             preds.append(prediction_hard)
             pbar.set_postfix(loss=f'{loss:.4f}', refresh=False)
@@ -208,7 +237,8 @@ def eval_loop(model, loader, criterion, device, desc='Eval'):
     preds = np.concatenate(preds)
     labels = np.concatenate(labels)
     paths = np.concatenate(paths)
-    return paths, labels, preds, ep_loss
+    probs = np.concatenate(probs)
+    return paths, labels, preds, probs, ep_loss
 
 
 def change_relu_resnet(model):

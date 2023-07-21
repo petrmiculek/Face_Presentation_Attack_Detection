@@ -52,17 +52,5 @@ all_attacks - train on all attacks, test on all attacks (different people across
 
 [//]: # (add results)
 
-# TODO Add this to the top of each file
-```python3
-#! /usr/bin/env python3
-__author__ = 'Petr Mičulek'
-__project__ = 'Master Thesis - Explainable Face anti-spoofing'
-__date__ = '31/07/2023'
-# TODO Describe this file
-"""
-Dataset Rose-Youtu
-
-"""
-```
 
 
