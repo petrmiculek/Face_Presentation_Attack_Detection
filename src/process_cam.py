@@ -232,7 +232,7 @@ def plot5x5(cams, output_path=None):
     plt.close(fig)
 
 
-def deletion_per_image(del_scores, labels=None, x=None, many_ok=False):
+def deletion_per_image(del_scores, labels=None, x=None, many_ok=False, title=None):
     global args, cam_dir, ext, percentages_kept
     # x: perturbation level
     # y: prediction drop
@@ -252,11 +252,11 @@ def deletion_per_image(del_scores, labels=None, x=None, many_ok=False):
     plt.xticks(x)  # original x-values ticks
     plt.gca().invert_xaxis()  # decreasing x axis
     plt.ylim(0, 1.05)
-    if len(del_scores) < 10:  # otherwise too many labels
+    if len(del_scores) <= 10 and labels is not None:  # otherwise too many labels
         plt.legend()
     plt.ylabel('Prediction Score')
     plt.xlabel('Perturbation Intensity (% of image kept)')
-    plt.title('Deletion Metric')
+    plt.title(f'Deletion Metric {title}')
     # remove top and right spines
     plt.gca().spines['top'].set_visible(False)
     plt.gca().spines['right'].set_visible(False)
@@ -392,7 +392,7 @@ if __name__ == '__main__':
     auc_methods_ranking = df[['method', 'auc']].groupby(['method']).mean().sort_values('auc', ascending=False)
     auc_baselines_ranking = df[['baseline', 'auc']].groupby(['baseline']).mean().sort_values('auc', ascending=False)
 
-    ''' Plot CAM as used in the deletion metric. '''
+    ''' Plot CAMs as used in the deletion metric. '''
     if False:
         from PIL import Image
         import cv2
@@ -422,7 +422,7 @@ if __name__ == '__main__':
                   titles=['image', 'CAM', 'CAM upsampled to image'])
         # low and high resolution
         ''' Perturb explained region '''
-        cam_blur_weight = 1
+        cam_blur_weight = config.cam_blurred_weight
         cam_blurred = cam_pred + cam_blur_weight * cv2.blur(cam_pred, (config.blur_cam_s, config.blur_cam_s))
         thresholds = np.percentile(cam_blurred, percentages_kept)
         thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
@@ -456,17 +456,30 @@ if __name__ == '__main__':
 
         plot_many([img, sobel_full, img_camsized, sobel_camsized, sobel_downsampled])
 
-    # todo: load landmarks
+    ''' Landmarks '''
+    if False:
+        from util_face import get_ref_landmarks
+
+        landmarks = get_ref_landmarks()
+        plt.imshow(img)
+        plt.scatter(landmarks[:, 0], landmarks[:, 1], s=1, c='r')
+        plt.show()
 
     # check if this gets moved to the left, as I paste in another snippet
     if False:
         # for each method, plot worst and best CAMs, given by their AUC
-        for m in methods:
+        for m in methods_unique:
             df_m = df[df['method'] == m].copy()
             df_m = df_m.sort_values('auc')  # ascending
             k = 5
             worst = df_m.head(k)
             best = df_m.tail(k)
+            wb = pd.concat([worst, best], ignore_index=True)
+            imgs = [Image.open(row['path']) for _, row in wb.iterrows()]
+            plot_many(imgs, titles=[f'{a:.3f}' for a in wb.auc])
+
+            deletion_per_image(wb.del_scores, labels=[f'{r.idx}: {r.auc:.3f}' for _, r in wb.iterrows()],
+                               title=f'- {m}')
 
     ''' Plot CAMs for wrong predictions '''
     if False:
@@ -501,6 +514,7 @@ if __name__ == '__main__':
                 corr_pearson = 0
                 corr_spearman = 0
             else:
+                # todo normalize to [0, 1]
                 corrcoef = np.corrcoef(c1.flatten(), c2.flatten())  # -> [2, 2]
                 corr_pearson = pearsonr(c1.flatten(), c2.flatten())
                 corr_spearman = spearmanr(c1.flatten(), c2.flatten())

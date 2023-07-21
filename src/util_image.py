@@ -78,7 +78,7 @@ def sobel_edges(img):
 
 def model_cam_shape(model):
     name = model.__class__.__name__
-    shapes = {'ResNet': (7, 7), 'EfficientNet': (12, 12)}  # todo test
+    shapes = {'ResNet': (7, 7), 'EfficientNet': (12, 12)}
     return shapes[name]
 
 
@@ -86,7 +86,7 @@ class SobelFakeCAM:
     """
     Fake CAM - Sobel edge detector.
 
-    CAM-like interface for a model-agnostic, training-data-agnostic explanation.
+    CAM-like interface for a model-agnostic explanation.
     """
 
     def __init__(self, *args, **kwargs):
@@ -94,14 +94,14 @@ class SobelFakeCAM:
         pass
 
     def __call__(self, input_tensor, *args, **kwargs):
-        import torch
-        if isinstance(input_tensor, torch.Tensor):
+        from torch import Tensor as torch_tensor
+        if isinstance(input_tensor, torch_tensor):
             input_tensor = input_tensor[0].cpu().numpy().transpose(1, 2, 0)
 
         edges = sobel_edges(input_tensor)
         edges_lr = cv2.resize(edges, self.shape, interpolation=cv2.INTER_AREA)
 
-        return edges_lr
+        return edges_lr[None, ...]  # extra dim to match how CAMs are returned
 
 
 class CircleFakeCAM:
@@ -128,7 +128,7 @@ class CircleFakeCAM:
             expl = self.gaussian_circle(shape)
             self.cache[shape] = expl
 
-        return expl
+        return expl[None, ...]
 
     def gaussian_circle(self, shape):
         center = (shape[0] // 2, shape[1] // 2)

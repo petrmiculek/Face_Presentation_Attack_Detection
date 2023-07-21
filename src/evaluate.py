@@ -349,7 +349,8 @@ if __name__ == '__main__':
                         cam_pred = cv2.resize(cam_pred, wh_image)  # interpolation bilinear by default
 
                     ''' Perturbation baselines '''
-                    b_black = np.zeros_like(cam_pred)
+                    # numpy arrays float [0, 1], shape (C, H, W): C=1 for black, C=3 for blur and mean
+                    b_black = np.zeros_like(cam_pred)[None, ...]
                     b_blur = np.stack(  # np.stack for CHW
                         [cv2.blur(img_np[c], (config.blur_img_s, config.blur_img_s)) for c in range(3)])
                     b_mean = np.zeros_like(img_np) + np.mean(img_np, axis=(1, 2), keepdims=True)
@@ -368,10 +369,15 @@ if __name__ == '__main__':
                         baseline = torch.tensor(baseline, device=device)
                         imgs_perturbed = []
                         for th in thresholds:  # loop skips re-prediction for 100%
-                            mask = torch.Tensor(cam_blurred < th).to(device)
+                            mask_np = np.float32(cam_blurred < th)
+                            mask_blurred = cv2.blur(mask_np, (config.blur_mask_s, config.blur_mask_s))
+                            mask = torch.Tensor(mask_blurred).to(device)
                             img_masked = (img * mask + (1 - mask) * baseline)[None, ...]
-                            # img_masked_plotting = img_plotting * mask.cpu().numpy()
                             imgs_perturbed.append(img_masked.to(dtype=torch.float32))
+
+                            # debugging + visualization
+                            # plot_many([img_np, cam_pred, cam_blurred, mask_np, mask_blurred, img_masked],
+                            #           titles=['img', 'cam_pred', 'cam_blurred', 'mask_np', 'mask_blurred', 'img_masked'])
 
                         ''' Predict on perturbed images '''
                         preds_perturbed_b, _ = predict(model, torch.cat(imgs_perturbed, dim=0))

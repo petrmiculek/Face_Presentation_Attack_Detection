@@ -52,7 +52,7 @@ def face_height(landmarks):
     return landmarks_height
 
 
-def get_ref_landmarks(scale, margin, img_shape_verify=(384, 384)):
+def get_ref_landmarks(scale=3.25, margin=None, img_shape_verify=(384, 384)):
     """ Get IPT reference landmarks for face alignment.
     [left eye, right eye, nose, left mouth, right mouth]
     defined for a 112x112 image, scale/pad accordingly.
@@ -66,6 +66,8 @@ def get_ref_landmarks(scale, margin, img_shape_verify=(384, 384)):
     :return: IPT reference landmarks,
              derived alignment landmarks
     """
+    if margin is None:
+        margin = img_shape_verify[0] - 112 * scale
     assert (112 * scale + margin) == img_shape_verify[0], \
         f'scale and margin must be chosen to match image size {img_shape_verify[0]}'
     ipt_pts = np.float32([[38.0, 38.0], [74.0, 38.0], [56.0, 58.0],
