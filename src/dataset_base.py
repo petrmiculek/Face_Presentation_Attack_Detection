@@ -14,6 +14,11 @@ import numpy as np
 
 # local
 # -
+
+''' Global variables '''
+label_names_binary = ['genuine', 'attack']
+
+
 class BaseDataset(Dataset):
     def __init__(self, annotations, transform=None):
         self.transform = transform
@@ -132,6 +137,12 @@ def pick_dataset_version(name, mode, attack=None, note=None):
 
     if attack is None and mode in ['unseen_attack', 'one_attack']:
         print(f'Warning: Picking dataset without an attack number.')
+
+    # make attack integer if possible
+    try:
+        attack = int(attack)
+    except (ValueError, TypeError):
+        pass
 
     ''' Filter iteratively by each aspect '''
     kv = {'dataset_name': name, 'training_mode': mode, 'attack_test': attack, 'note': note}
@@ -280,7 +291,7 @@ def show_labels_distribution(labels, split_name='', num_classes=None):
 
 def get_dataset_setup(dataset_module, training_mode):
     """Get dataset setup (label names, number of classes) for a given training mode."""
-    label_names_binary = ['genuine', 'attack']
+    global label_names_binary
     if training_mode == 'all_attacks':
         label_names = dataset_module.label_names_unified
         num_classes = len(dataset_module.labels_unified)
@@ -292,4 +303,4 @@ def get_dataset_setup(dataset_module, training_mode):
         num_classes = 2
     else:
         raise ValueError(f'Unknown training mode: {training_mode}')
-    return label_names, label_names_binary, num_classes
+    return label_names, num_classes

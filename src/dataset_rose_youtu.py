@@ -280,6 +280,8 @@ if __name__ == '__main__':
     ''' Bare Dataset without Loader'''
     from dataset_base import load_annotations
 
+    # unused: there should be pick_dataset and load_annotations.
+
     paths = preprocess_annotations('/mnt/sdb1/dp/rt_single', use_as_label='label_unif')
     # load_annotations
     dataset = Dataset(paths)

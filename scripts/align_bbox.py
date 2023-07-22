@@ -13,7 +13,7 @@ cwd = os.getcwd()
 sys.path.extend([cwd] + [join(cwd, d) for d in os.listdir() if os.path.isdir(d)])
 
 # external
-from facenet_pytorch import MTCNN, InceptionResnetV1
+from facenet_pytorch import MTCNN
 import cv2
 from PIL import Image
 import numpy as np

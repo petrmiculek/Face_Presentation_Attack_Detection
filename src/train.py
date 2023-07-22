@@ -39,7 +39,7 @@ import config
 from metrics import confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, keys_append, save_dict_json, update_config
 from util_torch import EarlyStopping, load_model, get_dataset_module, count_parameters
-from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, split_dataset_name
+from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, split_dataset_name, label_names_binary
 from util_torch import init_device, init_seed, eval_loop
 
 ''' Global variables '''
@@ -87,8 +87,7 @@ if __name__ == '__main__':
 
     # set training mode
     training_mode = args.mode  # 'one_attack' or 'unseen_attack' or 'all_attacks'
-    label_names, label_names_binary, num_classes = get_dataset_setup(dataset_module, training_mode)
-
+    label_names, num_classes = get_dataset_setup(dataset_module, training_mode)
     ''' Initialization '''
     if True:
         ''' (Random) seed '''
@@ -308,7 +307,6 @@ if __name__ == '__main__':
 
     ''' Plot results - Confusion matrix '''
     if args.mode == 'one_attack':
-        # attack_train_name = attack_train  # dataset_module.label_names_unified[attack_train]
         # attack_test_name = attack_test  # dataset_module.label_names_unified[attack_test]
         title_suffix = f'Test' \
                        f'\ntrain: {attack_train}, test: {attack_test}'

@@ -41,9 +41,6 @@ def resnet18(*, weights=None, progress: bool = True, weight_class,  **kwargs: An
             for more details about this class.
        weight_class: MODIFIED FROM ORIGINAL TORCHVISION CODE
             stay within API bounds, but don't import all torchvision code here
-
-    .. autoclass:: torchvision.models.ResNet18_Weights
-        :members:
     """
     weights = weight_class.verify(weights)
 
@@ -121,7 +118,7 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
     # while original implementation places the stride at the first 1x1 convolution(self.conv1)
-    # according to "Deep residual learning for image recognition"https://arxiv.org/abs/1512.03385.
+    # according to "Deep residual learning for image recognition" https://arxiv.org/abs/1512.03385.
     # This variant is also known as ResNet V1.5 and improves accuracy according to
     # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
 
@@ -296,7 +293,7 @@ class ResNet(nn.Module):
         x = self.layer4(x)
         x = self.avgpool(x)
         x = torch.flatten(x, 1)  # x = embedding
-        y = self.fc_multiclass(x)  # y = prediction  # todo depends on how `fc` is set up
+        y = self.fc_multiclass(x)  # y = prediction
         return y, x
 
     def forward_train(self, x: Tensor) -> Dict[str, Tensor]:

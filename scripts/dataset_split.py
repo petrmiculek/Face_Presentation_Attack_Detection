@@ -21,7 +21,7 @@ import config
 import dataset_rose_youtu
 import dataset_siwm
 from util import save_dict_json
-from dataset_base import show_labels_distribution
+from dataset_base import show_labels_distribution, get_dataset_setup
 
 ''' Logging format '''
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.DEBUG,
@@ -41,17 +41,14 @@ parser.add_argument('-c', '--comment', type=str, default='')
 
 ''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
 '''
-RoseYoutu contains 10 people. In every training mode:
-Split into 8 for training, 1 for validation, 1 for testing
+RoseYoutu contains 20 people - split into 9/1/10 for train/val/test.
 Every person has the same number of samples, but not the same number of attack types
 
 Tested on:
                 |  rose_youtu  |    siwm    |   rose_youtu_full
-all_attacks     | training OK  |    .       |   training OK
-unseen_attack   | training OK  |    .       |   training OK
-one_attack      |       .      |    .       |   training OK
-
-# generation failed for one_attack on metacentrum
+all_attacks     |    OK        |    .       |       OK
+unseen_attack   |    OK        |    .       |       OK
+one_attack      |    OK        |    .       |       OK
 '''
 
 # def main():
@@ -78,18 +75,7 @@ if __name__ == '__main__':
         raise ValueError('dataset must be in {rose_youtu, siwm}')
 
     ''' Choose training mode '''
-    if mode == 'all_attacks':
-        label_names = dataset.label_names_unified
-        num_classes = len(dataset.labels_unified)
-    elif mode == 'one_attack':
-        label_names = ['genuine', 'attack']
-        num_classes = 2
-    elif mode == 'unseen_attack':
-        label_names = ['genuine', 'attack']
-        num_classes = 2
-    else:
-        raise ValueError(f'Unknown training mode: {mode}')
-
+    label_names, num_classes = get_dataset_setup(dataset, mode)
     if mode in ['one_attack', 'unseen_attack']:
         if args.attack_test not in dataset.attack_nums_unified:
             raise ValueError(f'Attack test must be in {dataset.attack_nums_unified}')

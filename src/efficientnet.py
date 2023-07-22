@@ -116,8 +116,6 @@ def efficientnet_v2_s(
             base class. Please refer to the `source code
             <https://github.com/pytorch/vision/blob/main/torchvision/models/efficientnet.py>`_
             for more details about this class.
-    .. autoclass:: torchvision.models.EfficientNet_V2_S_Weights
-        :members:
     """
     weights = EfficientNet_V2_S_Weights.verify(weights)
 

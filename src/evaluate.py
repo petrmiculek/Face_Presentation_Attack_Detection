@@ -35,8 +35,8 @@ pil_logger.setLevel(logging.INFO)
 from metrics import compute_metrics, confusion_matrix
 from util import print_dict, save_i, keys_append
 from util_torch import init_device, init_seed, load_model_eval, get_dataset_module, predict, eval_loop
-from util_image import plot_many
-from dataset_base import pick_dataset_version, load_dataset
+from util_expl import perturbation_baselines, perturbation_masks
+from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, label_names_binary
 import config
 
 ''' Global variables '''
@@ -45,6 +45,9 @@ model = None
 device = None
 preprocess = None
 criterion = None
+args = None
+bona_fide = None
+label_names = None
 
 ''' Parsing Arguments '''
 parser = argparse.ArgumentParser()  # description='Evaluate model on dataset, run explanation methods'
@@ -102,8 +105,23 @@ def get_preds(dataset_loader, split_name, output_dir, new=False, overwrite=False
     return predictions
 
 
+def get_confusion_matrix(df_outputs, output_dir, split='test'):
+    global label_names, bona_fide, args
+    ''' Multi-class confusion matrix '''
+    output_path = join(output_dir, f'confmat_{split}.pdf')
+    confusion_matrix(df_outputs['label'], df_outputs['pred'], output_location=output_path,
+                     labels=label_names, show=args.show)
+    ''' Binary confusion matrix '''
+    output_path = join(output_dir, f'confmat_binary_{split}.pdf')
+    preds_binary = df_outputs['pred'] != bona_fide
+    labels_binary = df_outputs['label'] != bona_fide
+    confusion_matrix(labels_binary, preds_binary, output_location=output_path,
+                     labels=label_names_binary, show=args.show)
+
+
+
 # def main():
-#     global model, device, criterion  # disable when not using def main
+#     global model, device, criterion, args, bona_fide, label_names  # disable when not using def main
 if __name__ == '__main__':
     """
     Evaluate model on dataset, run explanation methods
@@ -149,7 +167,8 @@ if __name__ == '__main__':
     train_loader, val_loader, test_loader = \
         load_dataset(dataset_meta, dataset_module, path_prefix=args.path, limit=limit, quiet=False, **loader_kwargs)
     bona_fide = dataset_module.bona_fide
-    label_names = dataset_module.label_names_unified  # dataset_base.get_dataset_setup :)
+    label_names, num_classes = get_dataset_setup(dataset_module, training_mode)
+
     ''' Output directory '''
     output_dir = join(run_dir, f'eval-{dataset_id}')
     os.makedirs(output_dir, exist_ok=True)
@@ -201,10 +220,8 @@ if __name__ == '__main__':
             plt.tight_layout()
             if show:
                 plt.show()
-
             if output_path:
                 plt.savefig(output_path)
-
             plt.close()
 
         nums_to_names = dataset_module.nums_to_unified
@@ -260,57 +277,34 @@ if __name__ == '__main__':
 
     ''' Evaluation '''
     if args.eval:
-        ''' Training set '''
+        ''' Evaluate model on training/validation/test set, save predictions '''
         outputs_train = get_preds(train_loader, 'train', output_dir)
-        ''' Validation set '''
         outputs_val = get_preds(val_loader, 'val', output_dir, new=True)
-        ''' Test set '''
         outputs_test = get_preds(test_loader, 'test', output_dir)
+        # note: no notion of `limit` when saving predictions. Assumed to be the full dataset length.
         metrics_test = compute_metrics(outputs_test['label'], outputs_test['pred'])
         metrics_test = keys_append(metrics_test, ' Test')
         cr = classification_report(outputs_test['label'], outputs_test['pred'])
         print(cr)
-
         ''' Confusion matrix '''
-        if True:
-            cm_location = join(output_dir, f'confmat_test.pdf')
-            confusion_matrix(outputs_test['label'], outputs_test['pred'], output_location=cm_location,
-                             labels=label_names, show=args.show)
-
-            cm_binary_location = join(output_dir, f'confmat_binary_test.pdf')
-            label_names_binary = ['genuine', 'attack']
-            preds_binary = outputs_test['pred'] != bona_fide
-            labels_binary = outputs_test['label'] != bona_fide
-            confusion_matrix(labels_binary, preds_binary, output_location=cm_binary_location, labels=label_names_binary,
-                             show=args.show)
+        get_confusion_matrix(outputs_test, output_dir)
 
     ''' CAM Explanations  '''
     if args.cam:
-        """
-        Features:
-        - AUC
-            - how to normalize
-        Baselines:
-        - random weights
-        """
-        from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, \
-            LayerCAM, RandomCAM  # todo check more methods in the library
+        from pytorch_grad_cam import GradCAM
         from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
         import cv2
-        from config import blur_cam_s as s_cam, blur_mask_s as s_mask, blur_img_s as s_img
-        from util_image import SobelFakeCAM, CircleFakeCAM, deprocess
 
         cam_dir = join(output_dir, 'cam')
         os.makedirs(cam_dir, exist_ok=True)
+        ''' Setup: model, target layers and classes, methods '''
         target_layers = [model.features[-1][0]] if model_name == 'efficientnet_v2_s' else [model.layer4[-1].bn2]
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, RandomCAM, SobelFakeCAM,
-                          CircleFakeCAM]  # , CircleFakeCAM]  # [RandomCAM, SobelFakeCAM, CircleFakeCAM, HiResCAM, GradCAM, GradCAMPlusPlus, XGradCAM, EigenCAM]
-        # ScoreCAM OOM, FullGrad too different; AblationCAM runs too long
-        targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
+        targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(num_classes)]
         #           ^ minor visual difference from ClassifierOutputTarget.
-
-        percentages = config.percentages_kept[1:]  # 100% was the original, so skip it
+        percentages = config.percentages_kept[1:]  # deletion metric: %pixels to keep, skip 100%
+        method_modules = [GradCAM]  # [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, RandomCAM, SobelFakeCAM, CircleFakeCAM]
+        # ScoreCAM OOM, FullGrad too different; AblationCAM runs too long
 
         for i_m, method_module in enumerate(method_modules):
             cams_out = []
@@ -318,16 +312,12 @@ if __name__ == '__main__':
             method_name = cam_method.__class__.__name__
             print(f'{method_name} ({i_m + 1}/{len(method_modules)})')
             for batch in tqdm(test_loader, mininterval=2., desc=method_name):
-                ''' Predict (batch) '''
-                img_batch = batch['image'].to(device)
-                preds_b, preds_classes_b = predict(model, img_batch)  # prediction on original image (batch)
-
-                ''' Generate CAMs for images in batch '''
-                for i, img in enumerate(img_batch):
+                ''' Predict on original images '''
+                preds_b, preds_classes_b = predict(model, batch['image'].to(device))  # prediction on original image (batch)
+                for i, img in enumerate(batch['image']):
                     img_np = img.cpu().numpy()
                     pred = preds_b[i]
                     pred_class = preds_classes_b[i]
-                    pred_class_name = label_names[pred_class]
                     idx = batch['idx'][i].item()
                     label = batch['label'][i].item()
 
@@ -336,46 +326,17 @@ if __name__ == '__main__':
                     cam_pred = cams[pred_class][0]  # deletion metric only works with CAM for the predicted class
                     cams = np.stack(cams)  # [C, H, W]
                     cams = (255 * cams).astype(np.uint8)[:, 0]  # uint8 to save space
-
-                    # resize to original image size
-                    wh_image = (img.shape[1], img.shape[2])
-                    if cam_pred.shape != wh_image:
-                        cam_pred = cv2.resize(cam_pred, wh_image)  # interpolation bilinear by default
-
-                    ''' Perturbation baselines '''
-                    # numpy arrays float [0, 1], shape (C, H, W): C=1 for black, C=3 for blur and mean
-                    b_black = np.zeros_like(cam_pred)[None, ...]
-                    b_blur = np.stack([cv2.blur(img_np[c], (s_img, s_img)) for c in range(3)])  # np.stack for CHW
-                    b_mean = np.zeros_like(img_np) + np.mean(img_np, axis=(1, 2), keepdims=True)
-                    b_blurdark = b_blur / 4
-                    b_blurdarker = b_blur / 6
-                    b_blurdarkerer = b_blur / 8
-
-                    ''' Perturb explained region '''
-                    cam_blurred = cam_pred + config.cam_blurred_weight * cv2.blur(cam_pred, (s_cam, s_cam))
-                    thresholds = np.percentile(cam_blurred, percentages)
-                    thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
-
-                    # for base_name, baseline in [('black', b_black)]:
-                    for base_name, baseline in zip(['black', 'blur', 'blurdark', 'blurdarker', 'blurdarkerer'],
-                                                   [b_black, b_blur, b_blurdark, b_blurdarker, b_blurdarkerer]):  # unused for main experiments
-                        baseline = torch.tensor(baseline, device=device)
-                        imgs_perturbed = []
-                        for th in thresholds:  # loop skips re-prediction for 100%
-                            mask_np = np.float32(cam_blurred < th)
-                            mask_blurred = cv2.blur(mask_np, (s_mask, s_mask))
-                            mask = torch.Tensor(mask_blurred).to(device)
-                            img_masked = (img * mask + (1 - mask) * baseline)[None, ...]
-                            imgs_perturbed.append(img_masked.to(dtype=torch.float32))
-
-                            # debugging + visualization
-                            # plot_many([img_np, cam_pred, cam_blurred, mask_np, mask_blurred, img_masked],
-                            #           titles=['img', 'cam_pred', 'cam_blurred', 'mask_np', 'mask_blurred', 'img_masked'])
-
+                    # resize CAM to original image size
+                    cam_pred = cv2.resize(cam_pred, (img.shape[1], img.shape[2]))  # interpolation bilinear by default
+                    ''' Perturb explained region and predict again '''
+                    masks = perturbation_masks(cam_pred, percentages)
+                    baselines = perturbation_baselines(cam_pred, img_np, which=['black', ])  #
+                    for base_name, baseline in baselines.items():
                         ''' Predict on perturbed images '''
-                        preds_perturbed_b, _ = predict(model, torch.cat(imgs_perturbed, dim=0))
+                        imgs_perturbed = [(img_np * mask + (1 - mask) * baseline) for mask in masks]
+                        preds_perturbed, _ = predict(model, torch.tensor(imgs_perturbed, device=device, dtype=torch.float32))
                         ''' Save Deletion Scores '''
-                        probs_perturbed = np.stack([pred, *preds_perturbed_b])
+                        probs_perturbed = np.stack([pred, *preds_perturbed])  # pre-prend original prediction
                         cams_out.append({'cam': cams, 'idx': idx, 'path': batch['path'][i],  # strings are not tensors
                                          'method': method_name, 'percentages_kept': config.percentages_kept,
                                          'baseline': base_name, 'label': label, 'pred': preds_classes_b[i],
@@ -386,9 +347,8 @@ if __name__ == '__main__':
             ''' Save CAMs per method '''
             cams_df = pd.DataFrame(cams_out)
             output_path = join(cam_dir, f'cams_{method_name}_{limit if limit else "full"}.pkl.gz')
-            if exists(output_path):  # rename old file
+            if exists(output_path):  # rename: prepend 'old' to file name
                 print(f'File {output_path} already exists, renaming it.')
-                # prepend 'old' to file name
                 move(output_path, output_path.replace('cams_', 'old-cams_'))
             cams_df.to_pickle(output_path)
         # end of all methods
