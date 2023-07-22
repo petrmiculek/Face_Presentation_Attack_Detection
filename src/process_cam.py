@@ -150,12 +150,7 @@ def plot1x5(cams, title='', output_path=None):
     plt.tight_layout()
     plt.subplots_adjust(left=0, right=1, top=0.95, bottom=-0.05)
     fig.suptitle(title)
-    if output_path is not None and not args.no_log:
-        plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
-        print(f'Saved to {output_path}, {title} (plot1x5)')
-    if args.show:
-        plt.show()
-    plt.close(fig)
+    plt_save_close(output_path)
 
 
 def plot2x3(cam_entry, img, output_path=None, title='', **kwargs):
@@ -189,12 +184,7 @@ def plot2x3(cam_entry, img, output_path=None, title='', **kwargs):
         plt.title(ax_title)
 
     plt.tight_layout()
-    if output_path is not None and not args.no_log:
-        plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
-        print(f'Saved to {output_path}, {title} (plot2x3)')
-    if args.show:
-        plt.show()
-    plt.close(fig)
+    plt_save_close(output_path)
 
 
 def plot5x5(cams, output_path=None):
@@ -241,10 +231,17 @@ def plt_save_close(output_path=None):
     plt.close()
 
 
+def plt_legend(legend_title, order=None, line_labels=None):
+    plt.legend(title=legend_title)
+    if order is not None:  # reorder legend by aucs (ascending)
+        handles, labels_auto = plt.gca().get_legend_handles_labels()
+        line_labels = line_labels if line_labels else labels_auto  # use given labels if available
+        plt.legend([handles[idx] for idx in order], [line_labels[idx] for idx in order], title=legend_title)
+
+
 def deletion_per_image(del_scores, line_labels=None, many_ok=False, title=None, output_path=None):
+    # x: perturbation level, y: prediction drop
     global percentages_kept
-    # x: perturbation level
-    # y: prediction drop
     if len(del_scores) > 20 and not many_ok:
         print(f'deletion_per_image: too many {len(del_scores)} samples, '
               f'override by `many_ok` to run anyway.')
@@ -300,12 +297,8 @@ def deletion_metric_per(df, key, output_path=None, line_labels=None, ranges=True
     plt.xticks(percentages_kept)  # original x-values ticks
     plt.gca().invert_xaxis()  # decreasing x axis
     plt.ylim(0, 1.05)
-    plt.legend(title=f'{key}: AUC')
-    if sort_aucs:  # reorder legend by aucs (ascending)
-        handles, labels_auto = plt.gca().get_legend_handles_labels()
-        order = np.argsort(aucs)
-        line_labels = line_labels if line_labels else labels_auto  # use given labels if available
-        plt.legend([handles[idx] for idx in order], [line_labels[idx] for idx in order], title=f'{key}: AUC')
+    order = np.argsort(aucs)
+    plt_legend(f'{key}: AUC', order, line_labels)
     plt.tight_layout()
     plt_save_close(output_path)
 
@@ -331,12 +324,7 @@ def deletion_metric_per_pred(df_base, output_path=None, title=None, ranges=True,
     plt.xticks(percentages_kept)  # original x-values ticks
     plt.gca().invert_xaxis()  # decreasing x axis
     plt.ylim(0, 1.05)
-    plt.legend(title='predicted: AUC')
-    if sort_aucs:
-        handles, line_labels = plt.gca().get_legend_handles_labels()
-        order = np.argsort(aucs)
-        plt.legend([handles[idx] for idx in order], [line_labels[idx] for idx in order], title='predicted: AUC')
-
+    plt_legend(f'predicted: AUC', np.argsort(aucs) if sort_aucs else None)
     plt.xlabel('% pixels kept')
     plt.ylabel('Prediction Score')
     plt.title(f'Deletion Metric by Class' + title)
@@ -473,14 +461,38 @@ if __name__ == '__main__':
     # First plot charts, keep grid on. (Then turn it off for images)
     plt.rcParams['axes.grid'] = True
 
-    ''' Rank based on AUC '''
-
+    ''' Rank by AUC '''
     auc_methods_ranking = rank_by_auc(df, ['method'])
     auc_baselines_ranking = rank_by_auc(df, ['baseline'])
     auc_methods_baselines_ranking = rank_by_auc(df, ['method', 'baseline'])
     print(auc_methods_ranking, '\n', auc_baselines_ranking, '\n', auc_methods_baselines_ranking)
     ''' Does image blurriness matter? '''
     laplacian_per_label_correct = df.groupby(['correct', 'label']).laplacian_var.mean()
+
+    ''' Rank baselines based on std of deletion scores '''
+    groups = df.groupby(['baseline']).del_scores_pred  # .std().sort_values(ascending=False)
+    baseline_del_scores_std = groups.apply(lambda x: np.std(np.stack(x.values), axis=0))
+    # convert rows to numpy arrays
+    # baseline_del_scores_std = baseline_del_scores_std.apply(lambda x: np.array(x.tolist()))
+
+    ''' Plot baseline stds '''
+    row_means = baseline_del_scores_std.apply(lambda x: np.mean(x)).sort_values()
+    for i, m in zip(baseline_del_scores_std.index, row_means):
+        row_vals = baseline_del_scores_std.loc[i]
+        plt.plot(row_vals, label=f'{i}: {m:.3f}')
+    plt_legend('baseline: std', np.arange(len(row_means)))
+    plt.title('Baseline deletion scores std')
+    plt.xticks(range(len(percentages_kept)), percentages_kept)
+    plt.xlabel('Percentage of pixels kept')
+    plt.ylabel('Deletion scores std')
+    plt.tight_layout()
+    plt.show()
+    # black has the lowest std, which is good.
+    ''' Does baseline choice matter? '''  # (older note)
+    if False:
+        pass
+        # average AUC
+        # difference between del_scores across baselines
 
     ''' Plot CAMs as used in the deletion metric. '''
     if False:
@@ -550,13 +562,6 @@ if __name__ == '__main__':
         plt.scatter(landmarks[:, 0], landmarks[:, 1], s=1, c='r')
         plt.show()
 
-    ''' Does baseline choice matter? '''
-    if False:
-        pass
-        # average AUC
-        # difference between del_scores across baselines
-
-    # check if this gets moved to the left, as I paste in another snippet
     ''' Best and worst CAMs per method, ranked by AUC '''
     if False:
         key = 'method'
@@ -606,7 +611,7 @@ if __name__ == '__main__':
         df_sample = df[df.idx == idx]
         methods = df_sample.method.values
         cams = np.stack(df_sample.cam.values)  # todo overwriting `cams` from above
-        cams = cams[:, :, 0, ...]  # drop 1-channel dim  -- not generally applicable
+        cams = cams[:, :, 0, ...]  # drop 1-channel dim  -- not applicable
         cam1 = cams[0]
         cam2 = cams[1]
         # plot_many([img, cam1, cam2], titles=['img', methods[0], methods[1]])
@@ -658,7 +663,7 @@ if __name__ == '__main__':
             deletion_metric_per_pred(df_base, output_path, f' - {baseline}', ranges=False, sort_aucs=False)
 
     # Plotting images, turn off grid
-    plt.rcParams['axes.grid'] = False
+    plt.rcParams['axes.grid'] = True
 
     ''' Per-image CAM - per-class heatmaps '''
     if False:

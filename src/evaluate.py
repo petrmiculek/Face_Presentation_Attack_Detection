@@ -138,7 +138,8 @@ if __name__ == '__main__':
     criterion = torch.nn.CrossEntropyLoss()  # softmax included in the loss
     ''' Dataset '''
     dataset_module = get_dataset_module(args.dataset)
-    dataset_meta = pick_dataset_version(args.dataset, training_mode, attack=args.attack)
+    attack = args.attack if args.attack else config_dict['attack']
+    dataset_meta = pick_dataset_version(args.dataset, training_mode, attack=attack)
     attack_test = args.attack if args.attack else dataset_meta['attack_test']  # unseen/one-attack
     dataset_id = f'{args.dataset}-{training_mode}' + f'-{attack_test}' if attack_test else ''
     loader_kwargs = {'shuffle': True, 'batch_size': batch_size, 'num_workers': num_workers,
@@ -303,7 +304,8 @@ if __name__ == '__main__':
         os.makedirs(cam_dir, exist_ok=True)
         target_layers = [model.features[-1][0]] if model_name == 'efficientnet_v2_s' else [model.layer4[-1].bn2]
         # ^ make sure only last layer of the block is used, but still wrapped in a list
-        method_modules = [GradCAM]  # , CircleFakeCAM]  # [RandomCAM, SobelFakeCAM, CircleFakeCAM, HiResCAM, GradCAM, GradCAMPlusPlus, XGradCAM, EigenCAM]
+        method_modules = [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, RandomCAM, SobelFakeCAM,
+                          CircleFakeCAM]  # , CircleFakeCAM]  # [RandomCAM, SobelFakeCAM, CircleFakeCAM, HiResCAM, GradCAM, GradCAMPlusPlus, XGradCAM, EigenCAM]
         # ScoreCAM OOM, FullGrad too different; AblationCAM runs too long
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(config_dict['num_classes'])]
         #           ^ minor visual difference from ClassifierOutputTarget.
