@@ -41,7 +41,6 @@ labels_orig = {
     'Mc': 'Mask cropped',
     'Mf': 'Mask full',
     'Mu': 'Mask upper',
-    # 'Ml': 'Mask lower'  # never occurs
 }
 
 labels_unified = {
@@ -83,7 +82,7 @@ labels_to_unified_num = {
 }
 
 unified_to_nums = dict(zip(labels_unified.keys(), range(len(labels_unified))))
-nums_to_unified = dict(zip(range(len(labels_unified)), labels_unified.values()))  # to names
+nums_to_unified = dict(enumerate(labels_unified.values()))  # to names
 label_names_unified = list(labels_unified.values())
 label_nums_unified = list(unified_to_nums.values())
 genuine_num_unified = bona_fide_unified = 0
@@ -93,12 +92,12 @@ num_classes_unified = len(labels_unified)  # 5
 genuine_num = bona_fide = 0
 ''' Make use of old labels throw an error to prevent silent slipups '''
 label_to_nums_orig = dict(zip(labels_orig.keys(), range(len(labels_orig))))
-nums_to_names = dict(zip(range(len(labels_orig)), labels_orig.values()))
-label_names = list(labels_orig.values())
-label_nums = list(label_to_nums_orig.values())
-attack_nums = [1, 2, 3, 4, 5, 6, 7]
-label_attack = list(label_to_nums_orig.values())
-label_attack.remove(bona_fide)
+nums_to_names_orig = dict(zip(range(len(labels_orig)), labels_orig.values()))
+label_names_orig = list(labels_orig.values())
+label_nums_orig = list(label_to_nums_orig.values())
+attack_nums_orig = [1, 2, 3, 4, 5, 6, 7]
+label_attack_orig = list(label_to_nums_orig.values())
+label_attack_orig.remove(bona_fide)
 
 speaking = {
     'T': 'true',  # talking

@@ -17,7 +17,7 @@ import numpy as np
 
 ''' Global variables '''
 label_names_binary = ['genuine', 'attack']
-
+nums_to_names_binary = dict(enumerate(label_names_binary))
 
 class BaseDataset(Dataset):
     def __init__(self, annotations, transform=None):

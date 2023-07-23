@@ -302,19 +302,22 @@ if __name__ == '__main__':
         # ^ make sure only last layer of the block is used, but still wrapped in a list
         targets = [ClassifierOutputSoftmaxTarget(cat) for cat in range(num_classes)]
         #           ^ minor visual difference from ClassifierOutputTarget.
-        percentages = config.percentages_kept[1:]  # deletion metric: %pixels to keep, skip 100%
+        percentages = config.percentages_kept  # %pixels kept when perturbing the images
+        len_pct = len(percentages)
         method_modules = [GradCAM]  # [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, RandomCAM, SobelFakeCAM, CircleFakeCAM]
         # ScoreCAM OOM, FullGrad too different; AblationCAM runs too long
-
+        ''' Generate CAMs using all methods '''
         for i_m, method_module in enumerate(method_modules):
             cams_out = []
             cam_method = method_module(model=model, target_layers=target_layers, use_cuda=device.type == 'cuda')
             method_name = cam_method.__class__.__name__
             print(f'{method_name} ({i_m + 1}/{len(method_modules)})')
-            for batch in tqdm(test_loader, mininterval=2., desc=method_name):
+            progress_bar = tqdm(test_loader, mininterval=2., desc=method_name)
+            for batch in progress_bar:
                 ''' Predict on original images '''
                 preds_b, preds_classes_b = predict(model, batch['image'].to(device))  # prediction on original image (batch)
                 for i, img in enumerate(batch['image']):
+                    progress_bar.set_description(f'{method_name}:{i}/{batch_size}')
                     img_np = img.cpu().numpy()
                     pred = preds_b[i]
                     pred_class = preds_classes_b[i]
@@ -330,17 +333,19 @@ if __name__ == '__main__':
                     cam_pred = cv2.resize(cam_pred, (img.shape[1], img.shape[2]))  # interpolation bilinear by default
                     ''' Perturb explained region and predict again '''
                     masks = perturbation_masks(cam_pred, percentages)
-                    baselines = perturbation_baselines(cam_pred, img_np, which=['black', ])  #
+                    baselines = perturbation_baselines(img_np, which=['black', ])  #
                     for base_name, baseline in baselines.items():
-                        ''' Predict on perturbed images '''
-                        imgs_perturbed = [(img_np * mask + (1 - mask) * baseline) for mask in masks]
-                        preds_perturbed, _ = predict(model, torch.tensor(imgs_perturbed, device=device, dtype=torch.float32))
+                        ''' Predict on perturbed images - deletion and insertion metrics '''
+                        imgs_deletion = np.array([(img_np * mask + (1 - mask) * baseline) for mask in masks])
+                        imgs_insertion = np.array([(img_np * (1 - mask) + mask * baseline) for mask in masks])
+                        preds_both, _ = predict(model, torch.tensor(np.r_[imgs_deletion, imgs_insertion], device=device, dtype=torch.float32))
+                        probs_deletion, probs_insertion = preds_both[:len_pct], preds_both[len_pct:][::-1]
+                        # `probs_insertion` reversed to match decreasing order of percentages_kept    ^^^^
                         ''' Save Deletion Scores '''
-                        probs_perturbed = np.stack([pred, *preds_perturbed])  # pre-prend original prediction
                         cams_out.append({'cam': cams, 'idx': idx, 'path': batch['path'][i],  # strings are not tensors
                                          'method': method_name, 'percentages_kept': config.percentages_kept,
-                                         'baseline': base_name, 'label': label, 'pred': preds_classes_b[i],
-                                         'del_scores': probs_perturbed, 'pred_scores': pred})
+                                         'baseline': base_name, 'label': label, 'pred': preds_classes_b[i], 'pred_scores': pred,
+                                         'del_scores': probs_deletion, 'ins_scores': probs_insertion})
                     # end of batch
                 # end of dataset
             # end of method

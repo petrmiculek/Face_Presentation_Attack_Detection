@@ -27,6 +27,7 @@ from glob import glob
 from os.path import join, basename, isfile, dirname
 import warnings
 
+
 # fix for local import problems - add all local directories
 sys_path_extension = [os.getcwd()]  # + [d for d in os.listdir() if os.path.isdir(d)]
 sys.path.extend(sys_path_extension)
@@ -61,11 +62,13 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
-from dataset_base import show_labels_distribution, pick_dataset_version, load_annotations
+import dataset_base
+from dataset_base import show_labels_distribution, pick_dataset_version, load_annotations, label_names_binary, get_dataset_setup
 from util_image import get_marker, plot_many
-from util_expl import overlay_cam, sobel_edges
+from util_expl import overlay_cam, sobel_edges, perturbation_masks, perturbation_baselines
 from util_torch import init_seed, get_dataset_module
 from util_face import get_ref_landmarks
+
 
 ''' Global variables '''
 run_dir = ''
@@ -412,7 +415,6 @@ if __name__ == '__main__':
     samples_dir = join(cam_dir, 'samples')
     os.makedirs(samples_dir, exist_ok=True)
 
-
     ''' Parse filenames '''
     # filenames example: cams_EigenCAM_20.pkl.gz
     # filenames pattern: cams_<method>_<limit>.pkl.gz
@@ -428,7 +430,7 @@ if __name__ == '__main__':
 
     ''' Load CAMs '''
     df = read_cams(args.files, args.path_prefix)
-    df_orig = df.copy()
+    df_untouched = df.copy()
     # read setup from run folder
     with open(join(run_dir, 'config.json'), 'r') as f:
         config_dict = json.load(f)
@@ -453,35 +455,32 @@ if __name__ == '__main__':
         annotations = load_annotations(dataset_meta, seed, args.path_prefix, limit)[split]
         ds = dataset_module.Dataset(annotations)
         bona_fide = dataset_module.bona_fide
-        label_names = dataset_module.label_names_unified if mode == 'unified' else ['Genuine', 'Attack']
-        num_classes = dataset_meta['num_classes']
-        nums_to_names = dataset_module.nums_to_unified
+        label_names, num_classes = get_dataset_setup(dataset_name, mode)
+        nums_to_names = dataset_module.nums_to_unified if mode == 'all_attacks' else dataset_base.nums_to_names_binary
+        nums_to_unified = dataset_module.nums_to_unified
+
         ''' Show labels distribution '''
         show_labels_distribution(annotations['label'], split, num_classes)
 
     ''' Metadata '''
-    df['shp'] = df.cam.apply(lambda x: x.shape)
     # join CAMs with metadata from annonations file
     df = df.merge(annotations, on='idx', how='inner', suffixes=('', '_y'))
 
     # Check CAMs shapes
+    df['shp'] = df.cam.apply(lambda x: x.shape)
     if len(df.shp.unique()) != 1:
         raise ValueError(f'Different CAM shapes!\n{df.shp.value_counts()}')
     cam_shape = df.iloc[0]['shp']
-    dg = df[['method', 'shp']].groupby('shp')
+    df_shapes_by_method = df[['method', 'shp']].groupby('shp')
     # which shapes are there for which methods?
-    for g, rows in dg:
+    for g, rows in df_shapes_by_method:
         print(f'{g}:\n', rows.method.value_counts())
 
-    if len(dg) != 1:
+    if len(df_shapes_by_method) != 1:
         filter_idxs = df.shp == cam_shape
         print(f'Filtering CAMs to keep only the first shape {sum(filter_idxs)}/{len(filter_idxs)}.')
         df = df[df.shp == cam_shape]
     print(f'CAM shape: {cam_shape}')
-
-    df_sample = df.sample(10)
-    dfcopy = df.copy()
-    # df = df_sample  # TODO TEMPORARY
 
     ''' AUC for each CAM '''
     percentages_kept = df['percentages_kept'].values[0]  # assume same for all
@@ -506,16 +505,24 @@ if __name__ == '__main__':
     ###############################################################################
     print(f'Loaded {len(df)} CAMs from {len(args.files)} files.')
     print(f'Methods: {methods_unique}')
+    # temporary: rename baselines:
+    # drop rows with baseline 'blurdarker'
+    df = df.drop(df[df['baseline'] == 'blurdarker'].index)
+    mapping = {'blurdark': 'blur_div4', 'blurdarkerer': 'blur_div8'}
+    df['baseline'] = df['baseline'].apply(lambda x: mapping[x] if x in mapping else x)
     print(f'Baselines: {baselines_unique}')
     print(f'Dataset, variant, split: {dataset_name}, {dataset_note}, {split}')
     print(f'Limit: {limit}')
-    print(f'Training Mode, test attack: {mode}, {nums_to_names[attack_test]}')
+    print(f'Training Mode, test attack: {mode}, {nums_to_unified[attack_test]}')
     print(f'Ground-truth labels: {df.label.unique()}')
     print(f'Showing plots: {args.show}')
 
     ''' ------- Exploring CAMs ------- '''
     # First plot charts, keep grid on. (Then turn it off for images)
     plt.rcParams['axes.grid'] = True
+
+    dfcopy = df.copy()
+    df_sample = df.sample(10)
 
     ''' Rank by AUC '''
     auc_methods_ranking = rank_by_auc(df, ['method'])
@@ -531,7 +538,7 @@ if __name__ == '__main__':
     # convert rows to numpy arrays
     # baseline_del_scores_std = baseline_del_scores_std.apply(lambda x: np.array(x.tolist()))
 
-    ''' Plot baseline stds '''
+    ''' Plot baseline deletion scores stds (how consistent is the baseline) '''
     if False:
         baseline_del_score_means = baseline_del_scores_std.apply(lambda x: np.mean(x)).sort_values()
         for i, m in zip(baseline_del_scores_std.index, baseline_del_score_means):
@@ -546,70 +553,141 @@ if __name__ == '__main__':
         output_path = join(cam_dir, f'baseline_del_scores_std.{ext}')
         plt_save_close(output_path)
         # black has the lowest std, which is good.
-    ''' Does baseline choice matter? '''  # (older note)
-    if False:
-        pass
-        # average AUC
-        # difference between del_scores across baselines
 
     ''' Plot CAMs as used in the deletion metric. '''
     if False:
-        row = df[df['label'] == 0].iloc[42]
-        method = row['method']
-        cam_pred = row['cam_pred']
+        row = df[df.label == 0].iloc[41]
+        idx = row.idx
+        method = row.method
+        cam_pred = row.cam_pred
         cam_pred_copy = cam_pred.copy()
         img_pil = Image.open(join(args.path_prefix, row['path']))
         img = np.array(img_pil, dtype=float) / 255  # HWC
-        # resize to original image size
-        wh_image = (img.shape[0], img.shape[1])
-        if cam_pred.shape != wh_image:
-            cam_pred = cv2.resize(cam_pred, wh_image)  # interpolation bilinear by default
+        img_chw = np.transpose(img, (2, 0, 1))  # CHW
+        ''' Deletion metric perturbations '''
+        cam_pred = cv2.resize(cam_pred, (img.shape[0], img.shape[1]))  # interpolation bilinear by default
+        masks = perturbation_masks(cam_pred, percentages_kept)
+        baselines = perturbation_baselines(img_chw)
+        baseline = baselines[row.baseline]
+        imgs_perturbed = [(img_chw * mask + (1 - mask) * baseline) for mask in masks]
+        ''' Compare baselines '''
+        plot_many([img, *list(baselines.values())], title='Perturbation baselines',
+                  titles=['image', *list(baselines.keys())],
+                  output_path=join(cam_dir, f'baselines_idx{idx}.{ext}'))
+        # CAM - low and upsampled resolution
+        plot_many([img, cam_pred_copy, cam_pred], title=f'{row.idx} {row.method}',
+                  titles=['image', 'CAM', 'CAM upsampled to image'],
+                  output_path=join(cam_dir, f'cam_upsampled.{ext}'))
+        # perturbed images
+        pct_strings = [f'{p}%' for p in percentages_kept]
+        plot_many(imgs_perturbed[:-1:2], titles=pct_strings[:-1:2], title='perturbed images', rows=1,
+                  output_path=join(cam_dir, f'perturbed_images_idx{idx}_{method}.{ext}'))
+        plot_many(masks[:-1:2], titles=pct_strings[:-1:2], title='perturbation masks', rows=1,
+                  output_path=join(cam_dir, f'perturbation_masks_idx{idx}_{method}.{ext}'))
 
-        ''' Perturbation baselines '''
-        from util_expl import perturbation_baselines
-
-        baselines = perturbation_baselines(cam_pred, img)
-
-        plot_many([img, b_black, b_blur, b_mean, b_blurdark], title='Perturbation baselines',
-                  titles=['image', 'black', 'blur', 'mean', 'blurdark'])
-
-        plot_many([img, cam_pred_copy, cam_pred], title=f'{row.idx} {method}',
-                  titles=['image', 'CAM', 'CAM upsampled to image'])
-        # low and high resolution
-        ''' Perturb explained region '''
-        cam_blur_weight = config.cam_blurred_weight
-        cam_blurred = cam_pred + cam_blur_weight * cv2.blur(cam_pred, (config.blur_cam_s, config.blur_cam_s))
-        thresholds = np.percentile(cam_blurred, percentages_kept)
-        thresholds[-1] = cam_blurred.min()  # make sure 0% kept is 0
-
-        plot_many([cam_pred, cam_blurred], titles=['cam_pred', 'cam_blurred'])
-
-        baseline_name = row['baseline']
-        baseline = b_mean
-        imgs_perturbed = []
-        masks = []
-        for th, pct in zip(thresholds, percentages_kept):
-            mask = (cam_blurred < th)[..., None]
-            img_masked = (img * mask + (1 - mask) * baseline)
-            # img_masked_plotting = img_plotting * mask.cpu().numpy()
-            imgs_perturbed.append(img_masked)
-            masks.append(mask)
-
-        plot_many(imgs_perturbed, titles=percentages_kept, title=f'{cam_blur_weight=}')
-        plot_many(masks, title='masks', titles=percentages_kept)
-
-        # showerthought: why do I compute the sobel edges for the full-size image?
-        # do it at the CAM size. No, it really looks more credible for full-size.
-        cam_wh = cam_pred_copy.shape
-
+        # compare Sobel edges: original resolution->downsampled x low-resolution
+        cam_hw = cam_pred_copy.shape
         sobel_full = sobel_edges(img)
-        sobel_downsampled = cv2.resize(sobel_full, cam_wh, interpolation=cv2.INTER_AREA)
+        sobel_downsampled = cv2.resize(sobel_full, cam_hw, interpolation=cv2.INTER_AREA)
+        img_lr = cv2.resize(img, cam_hw)
+        sobel_lr = sobel_edges(img_lr)
+        plot_many([img, sobel_full, sobel_downsampled, img_lr, sobel_lr], rows=1,
+                  titles=['image', 'sobel', 'sobel downsampled', 'image downsampled', 'sobel low-res'],
+                  output_path=join(cam_dir, f'sobel_edges_downscale.{ext}'))
 
-        img_camsized = cv2.resize(img, cam_wh)
-        sobel_camsized = sobel_edges(img_camsized)
+    ''' Find explanations that cause dropoff >= 0.5 when perturbed '''
+    visible, muted = 1, 0.3
+    pct_kept = np.array(percentages_kept)
 
-        plot_many([img, sobel_full, img_camsized, sobel_camsized, sobel_downsampled])
 
+    def mix_mask(img, mask, inside=1, outside=0.3):
+        """ Highlight masked area in the image, darken the rest. """
+        return img * outside + mask * img * (inside - outside)
+
+
+    ''' Plot dropoff explanations '''
+    if False:
+        ''' 
+        How much does it take to change the prediction?
+        find index in del_scores, where the predicted class probability drops below 0.5 *
+        get corresponding percentage of pixels kept
+        get perturbation mask for the CAM (of the originally predicted class) at that percentage
+        apply the mask to the image, showing the explanation, with the rest of the image muted.
+        
+        * 0.5 value -> almost sure prediction changed (binary = sure). 
+        I could also look for first changed class in del_scores.
+        
+        Next, I could group the rows by sample path, and show them together, comparing the methods.
+        '''
+        df = df_sample.copy()
+        df['dropoff_idx'] = df.apply(lambda row: np.argmax(row.del_scores_pred < 0.5), axis=1)  # argmax -> first
+        # if all are >= 0.5, then argmax returns 0, which is not desired
+        df['dropoff_pct'] = pct_kept[df.dropoff_idx]
+        df[df.dropoff_pct == 100] = 0
+
+        # descs = []
+        # for _, row in df_kept.iterrows():
+        #     pred_name = nums_to_names[row.pred]
+        #     pred_at_dropoff = row.del_scores[row.dropoff_idx]
+        #     pred_name_dropoff = nums_to_names[np.argmax(pred_at_dropoff)]
+        #     desc = f'{row.idx}: kept {row.dropoff_pct}% {pred_name} -> {pred_name_dropoff}'
+        #     descs.append(desc)
+
+        dropoffs_dir = join(cam_dir, 'dropoff')
+        os.makedirs(dropoffs_dir, exist_ok=True)
+        ''' Plot dropoff explanations '''
+        b = df.iloc[0].baseline  # assuming same baseline for all rows
+        paths_kept = df[df.dropoff_pct >= 80].path.unique()
+        for path in paths_kept:
+            df_path = df[(df.path == path) & (df.baseline == b)]
+            row = df_path.iloc[0]
+            idx = row.idx
+            img = np.array(Image.open(path), dtype=float) / 255
+            # get dropoff explanation masks
+            expls = df_path.apply(lambda row: perturbation_masks(cv2.resize(row.cam_pred, img_shape), [row.dropoff_pct])[0][..., None], axis=1)
+            # blend masks with image
+            blends = [mix_mask(img, (1 - expl)) for expl in expls]
+            titles = [f'image idx={idx}'] + [f'{row.method} {100 - row.dropoff_pct:d}%' for _, row in df_path.iterrows()]
+            title = f'GT: {nums_to_names_unif[row.label_unif]} pred: {nums_to_names[row.pred]}'  # ground truth always as multi-class for clarity
+            plot_many([img, *blends], titles=titles, title=title, output_path=join(dropoffs_dir, f'del_idx{idx}_pred{row.pred}_gt{row.label_unif}.{ext}'))
+            s = input()
+
+        titles = [f'{100 - row.dropoff_pct:d}%' for _, row in df_kept.iterrows()]
+        imgs = [Image.open(row.path) for _, row in df_kept.iterrows()]
+        imgs = [np.array(img, dtype=float) / 255 for img in imgs]
+        imgs_masked = [(im * mask * visible + (1 - mask) * im * muted) for im, mask in zip(imgs, dropoff_masks)]
+        plot_many(imgs_masked, titles=titles, title='Dropoff masks')
+        mask_removed = [(im * mask * muted + (1 - mask) * 1 * im * visible) for im, mask in zip(imgs, dropoff_masks)]
+        plot_many(mask_removed, titles=descs, title='Dropoff explanations',
+                  output_path=join(cam_dir, f'dropoff_explanations.{ext}'))
+
+    if False:
+        # re-do everything per-sample
+        good_explanations = []
+        # the idea is good, but it would be useful to group the samples by method
+        # and mark the method that caused the dropoff.
+
+        dfc = df.copy()
+        dfc['dropoff_idx'] = dfc.apply(lambda row: np.argmax(row.del_scores_pred < 0.5), axis=1)  # argmax -> first
+        dfc['dropoff_pct'] = pct_kept[dfc.dropoff_idx]
+        dfc_kept = dfc[(dfc.dropoff_pct >= 80) & (dfc.dropoff_pct != 100)]
+        for _, row in dfc_kept.iterrows():
+            dropoff_mask = perturbation_masks(cv2.resize(row.cam_pred, img_shape), [row.dropoff_pct])[0][..., None]
+            pred_name_dropoff = nums_to_names[np.argmax(row.del_scores[row.dropoff_idx])]
+            desc = f'{row.idx}: {100 - row.dropoff_pct}% {nums_to_names[row.pred]} -> {pred_name_dropoff}'
+            img = np.array(Image.open(row.path), dtype=float) / 255
+            img_kept = mix_mask(img, dropoff_mask)
+            expl_removed = mix_mask(img, (1 - dropoff_mask))
+
+            # plot_many([img, row.cam_pred, expl_removed], titles=['image', 'expl', 'removed'], title=desc)
+            # good_explanations.append({'expl': expl_removed, 'title': desc, 'path': row.path, 'method': row.method})
+
+            # plot_many(img_kept)
+
+            plot_many(expl_removed, title=desc)
+            s = input()
+
+        # we are interested in the smallest explanations that already cause the dropoff.
     ''' Landmarks '''
     if False:
         # sample image with reference landmarks
@@ -633,12 +711,9 @@ if __name__ == '__main__':
             imgs = [np.array(img, dtype=float) / 255 for img in imgs]
 
             # keep only area highlighted by cam_pred
-            cam_pred_upsampled = wb.cam_pred.apply(lambda x: cv2.resize(x, img_shape))
-            cam_pred_upsampled = np.stack(cam_pred_upsampled, dtype=float)  # todo maybe just *.values
-            imgs_masked_by_cam = []
-            for im, cam in zip(imgs, cam_pred_upsampled):
-                masked = im * cam[..., None]
-                imgs_masked_by_cam.append(masked)
+            cam_upsampled = wb.cam_pred.apply(lambda x: cv2.resize(x, img_shape))
+            cam_upsampled = np.stack(cam_upsampled, dtype=float)[..., None]  # (n, h, w, 1)
+            imgs_masked_by_cam = [im * cam for im, cam in zip(imgs, cam_upsampled)]
 
             # plot_many(imgs, titles=[f'{line_auc:.3f}' for line_auc in wb.auc])
             plot_many(imgs_masked_by_cam, titles=[f'{a:.3f}' for a in wb.auc], title=f'{key}: {k_val}')
@@ -743,7 +818,6 @@ if __name__ == '__main__':
         plot1x5(cams_pred, 'Average CAM per predicted class', output_path)
         plot_many(cams_pred, title='Average CAM per predicted class', titles=label_names, output_path=output_path)
 
-
     ''' Average CAM by ground-truth category '''
     if False:
         cams_gt = cam_mean(cams, labels)
@@ -789,7 +863,6 @@ if __name__ == '__main__':
                 plt.tight_layout()
                 plt_save_close(output_path)
             plot_many(imgs, titles=titles, output_path=output_path)
-
 
     ''' Further possible comparisons '''
     ''' Difference between predicted and ground truth category '''
