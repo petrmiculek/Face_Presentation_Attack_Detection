@@ -14,26 +14,40 @@ import seaborn as sns
 # local
 # -
 
-def compute_metrics(labels, preds, bona_fide=0):
+def compute_eer(gts_binary, probs):
+    """ Calculate the Equal Error Rate (EER) and the corresponding threshold.
+
+    :param gts_binary: ground truth binary labels
+    :param probs: probabilities of the positive class
+    :return: EER, threshold
     """
-    Compute metrics for binary classification.
+    fpr, tpr, thresholds = roc_curve(gts_binary, probs)
+    fnr = 1 - tpr
+    th = np.nanargmin(np.absolute((fnr - fpr)))
+    eer_threshold = thresholds[th]
+    eer = fpr[th] * 100
+    return eer, eer_threshold
+
+
+def compute_metrics(gts, pred_classes, bona_fide=0):
+    """ Compute metrics for binary classification.
 
     Important: TP=True Positive = Attack classified as Attack
     It is a binary evaluation, ignoring the specific attack type!
     """
-    if type(labels) == list:
-        labels = np.concatenate(labels)
-    if type(preds) == list:
-        preds = np.concatenate(preds)
+    if type(gts) == list:
+        gts = np.concatenate(gts)
+    if type(pred_classes) == list:
+        pred_classes = np.concatenate(pred_classes)
 
     ''' Multi-class Metrics: Accuracy only '''
-    accuracy_multiclass = np.sum(labels == preds) / len(labels)
+    accuracy_multiclass = np.sum(gts == pred_classes) / len(gts)
 
     ''' Binary Metrics: '''
-    tp = np.sum(np.logical_and(preds != bona_fide, labels != bona_fide))  # binary true positive
-    tn = np.sum(np.logical_and(preds == bona_fide, labels == bona_fide))
-    fp = np.sum(np.logical_and(preds != bona_fide, labels == bona_fide))
-    fn = np.sum(np.logical_and(preds == bona_fide, labels != bona_fide))
+    tp = np.sum(np.logical_and(pred_classes != bona_fide, gts != bona_fide))  # binary true positive
+    tn = np.sum(np.logical_and(pred_classes == bona_fide, gts == bona_fide))
+    fp = np.sum(np.logical_and(pred_classes != bona_fide, gts == bona_fide))
+    fn = np.sum(np.logical_and(pred_classes == bona_fide, gts != bona_fide))
 
     ''' Accuracy '''
     accuracy_binary = (tp + tn) / (tp + tn + fp + fn)
@@ -92,13 +106,13 @@ def compute_metrics(labels, preds, bona_fide=0):
     }
 
 
-def confusion_matrix(gts, preds, output_location=None, labels=None, show=False, **kwargs):
+def plot_confusion_matrix(gts, preds, output_path=None, labels=None, show=False, **kwargs):
     """
     Create and show/save confusion matrix
 
     :param gts: ground truth labels
     :param preds: predicted labels
-    :param output_location: where to save the plot
+    :param output_path: where to save the plot
     :param labels: list of labels to use
     :param show: whether to show the plot
     **keyword arguments:
@@ -146,18 +160,21 @@ def confusion_matrix(gts, preds, output_location=None, labels=None, show=False, 
 
     if show:
         fig_cm.figure.show()
-    if output_location:
-        fig_cm.figure.savefig(output_location, bbox_inches='tight')
+    if output_path:
+        fig_cm.figure.savefig(output_path, bbox_inches='tight')
     plt.close(fig_cm.figure)
 
 
-# TODO ROC Curve code unused  [func]
-'''
-# currently unused
-def plot_roc_curve(gts, predictions, show=True, output_location=None):
-    sns.set_context('paper', font_scale=1.8)
+def plot_roc_curve(gts, probs, show=True, output_path=None):
+    """ Plot a Receiver Operating Characteristic (ROC) curve.
 
-    fpr, tpr, thresholds = roc_curve(gts, predictions)
+    :param gts: Ground truth binary labels.
+    :param probs: probabilities of the positive class.
+    :param show: display the plot
+    :param output_path: Path to save the plot
+    """
+
+    fpr, tpr, thresholds = roc_curve(gts, probs)
     roc_auc = auc(fpr, tpr)
     display = RocCurveDisplay(fpr=fpr, tpr=tpr, roc_auc=roc_auc)
     display.plot()
@@ -167,8 +184,7 @@ def plot_roc_curve(gts, predictions, show=True, output_location=None):
             plt.tight_layout()
             plt.show()
 
-        if output_location is not None:
-            plt.savefig(output_location, bbox_inches='tight')
+        if output_path is not None:
+            plt.savefig(output_path, bbox_inches='tight')
     except Exception as e:
         print('Failed plotting/saving ROC curve\n', e)
-'''

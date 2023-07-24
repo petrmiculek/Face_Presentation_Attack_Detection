@@ -36,7 +36,7 @@ pil_logger.setLevel(logging.INFO)
 
 # local
 import config
-from metrics import confusion_matrix, compute_metrics  # , accuracy
+from metrics import plot_confusion_matrix, compute_metrics  # , accuracy
 from util import get_dict, print_dict, keys_append, save_dict_json, update_config
 from util_torch import EarlyStopping, load_model, get_dataset_module, count_parameters
 from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, split_dataset_name, label_names_binary
@@ -319,12 +319,12 @@ if __name__ == '__main__':
                        '\ntrain: all, test: all'
 
     cm_path = join(outputs_dir, 'confmat_test' + '.pdf') if not args.no_log else None
-    confusion_matrix(labels_test, preds_test, labels=label_names,
-                     title_suffix=title_suffix, output_location=cm_path)
+    plot_confusion_matrix(labels_test, preds_test, labels=label_names,
+                          title_suffix=title_suffix, output_path=cm_path)
     # binary confusion matrix
     cm_binary_path = join(outputs_dir, 'confmat_binary_test' + '.pdf') if not args.no_log else None
-    confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
-                     title_suffix=title_suffix, output_location=cm_binary_path)
+    plot_confusion_matrix(labels_test != bona_fide, preds_test != bona_fide, labels=label_names_binary,
+                          title_suffix=title_suffix, output_path=cm_binary_path)
 
     ''' Save config locally '''
     union_dict = {**vars(args), **wb.config, **metrics_test, **best_res}

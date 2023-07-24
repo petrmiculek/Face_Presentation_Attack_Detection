@@ -15,6 +15,7 @@ HPARAMS = {
 
 seed_eval_default = 42
 
+# image size - native, used for efficientnet, resnet uses (224, 224)
 sample_shape = (1, 3, 384, 384)
 
 # -----------------------

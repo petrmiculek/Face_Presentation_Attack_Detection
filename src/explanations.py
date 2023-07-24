@@ -12,7 +12,7 @@ from config import blur_img_s as s_img, blur_mask_s as s_mask, blur_cam_s as s_c
 
 
 def perturbation_masks(cam, percentages):
-    """ Get perturbation masks for deletion metric.
+    """ Get perturbation masks for deletion and insertion metrics.
     :param cam: CAM [h, w]
     :param percentages: list of percentages to keep
     :return: list of masks [h, w]
@@ -40,12 +40,11 @@ def perturbation_masks(cam, percentages):
 
 
 def perturbation_baselines(img_np, which=None):
-    """ Get perturbation baselines for deletion metric.
+    """ Get perturbation baselines for deletion and insertion metrics.
     :param img_np: image [c, h, w]
     :param which: baselines to return, all by default
-    :return: dict with deletion metric baselines
-    baselines are numpy arrays float [0, 1], shape (C, H, W):
-    default baselines (6): black-only, mean image color, and blurred
+    :return: dict of numpy arrays float [0, 1], shape (C, H, W):
+    default baselines (5): black-only, mean image color, and blurred
     input image with full, 1/4, and 1/8 of brightness, respectively.
     """
     if which is None:
@@ -151,8 +150,7 @@ class SobelFakeCAM:
 class CircleFakeCAM:
     """
     Fake CAM - centered circle.
-
-    CAM-like interface for a model-agnostic, (all-) data-agnostic explanation.
+    CAM-like interface for a model-agnostic, data-agnostic explanation.
     """
 
     def __init__(self, *args, **kwargs):
@@ -160,10 +158,6 @@ class CircleFakeCAM:
         self.cache = dict()
 
     def __call__(self, input_tensor, *args, **kwargs):
-        # shape = input_tensor.shape
-        # if input_tensor.ndim == 4:
-        #     shape = shape[0]
-        # shape = (1, shape[2], shape[3])
         # ignore input shape, use model-determined shape
         shape = self.shape
         if shape in self.cache:

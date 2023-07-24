@@ -32,10 +32,10 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-from metrics import compute_metrics, confusion_matrix
+from metrics import compute_eer, compute_metrics, plot_confusion_matrix, plot_roc_curve
 from util import print_dict, save_i, keys_append
 from util_torch import init_device, init_seed, load_model_eval, get_dataset_module, predict, eval_loop
-from util_expl import perturbation_baselines, perturbation_masks
+from explanations import perturbation_baselines, perturbation_masks
 from dataset_base import pick_dataset_version, load_dataset, get_dataset_setup, label_names_binary
 import config
 
@@ -66,10 +66,13 @@ parser.add_argument('-c', '--cam', help='generate CAM outputs', action='store_tr
 parser.add_argument('-v', '--eval', help='run evaluation loop', action='store_true')
 parser.add_argument('-e', '--emb', help='get embeddings', action='store_true')
 parser.add_argument('-z', '--show', help='show outputs', action='store_true')
+
+
 # possibly add --no-log
 
 
 def eval_loop_wrapper(loader):
+    """ Run evaluation loop and log results. """
     global model, criterion, device
     paths, labels, preds, probs, loss = eval_loop(model, loader, criterion, device)
     metrics = compute_metrics(labels, preds)
@@ -90,7 +93,8 @@ def get_preds(dataset_loader, split_name, output_dir, new=False, overwrite=False
     :param overwrite: overwrite when saving
     :return: predictions dataframe
     """
-    paths_save = join(output_dir, f'predictions_{split_name}.pkl')
+    limit = 'full' if args.limit in [None, -1] else args.limit
+    paths_save = join(output_dir, f'predictions_{split_name}_{limit}.pkl')
     if new or not os.path.isfile(paths_save):
         print(f'Evaluating on: {split_name}')
         res, predictions = eval_loop_wrapper(dataset_loader)
@@ -105,23 +109,36 @@ def get_preds(dataset_loader, split_name, output_dir, new=False, overwrite=False
     return predictions
 
 
-def get_confusion_matrix(df_outputs, output_dir, split='test'):
+def plot_confmats(df_outputs, output_dir, split='test'):
+    """ Plot confusion matrices and ROC curve comfortably. """
     global label_names, bona_fide, args
     ''' Multi-class confusion matrix '''
     output_path = join(output_dir, f'confmat_{split}.pdf')
-    confusion_matrix(df_outputs['label'], df_outputs['pred'], output_location=output_path,
-                     labels=label_names, show=args.show)
+    plot_confusion_matrix(df_outputs['label'], df_outputs['pred'], output_path=output_path,
+                          labels=label_names, show=args.show)
     ''' Binary confusion matrix '''
     output_path = join(output_dir, f'confmat_binary_{split}.pdf')
     preds_binary = df_outputs['pred'] != bona_fide
     labels_binary = df_outputs['label'] != bona_fide
-    confusion_matrix(labels_binary, preds_binary, output_location=output_path,
-                     labels=label_names_binary, show=args.show)
+    plot_confusion_matrix(labels_binary, preds_binary, output_path=output_path,
+                          labels=label_names_binary, show=args.show)
 
+
+def roc_eer(df_outputs, output_dir, split='test'):
+    """ Plot ROC curve and compute Equal Error Rate (EER). """
+    global bona_fide, args
+    ''' ROC-Curve '''
+    probs = 1 - np.stack(df_outputs['prob'].values)[:, 0]  # negative bona_fide probability
+    gts_binary = np.float32(df_outputs['label'] != bona_fide)
+    plot_roc_curve(gts_binary, probs, show=args.show, output_path=join(output_dir, f'roc_{split}.pdf'))
+    ''' Equal Error Rate (EER) '''
+    eer, eer_threshold = compute_eer(gts_binary, probs)
+    print(f'EER: {eer:.2f}%, threshold: {eer_threshold:.2f}')
+    return eer, eer_threshold
 
 
 # def main():
-#     global model, device, criterion, args, bona_fide, label_names  # disable when not using def main
+#     global model, device, criterion, args, bona_fide, label_names, limit  # disable when not using def main
 if __name__ == '__main__':
     """
     Evaluate model on dataset, run explanation methods
@@ -130,9 +147,6 @@ if __name__ == '__main__':
     """
     ''' Parse arguments '''
     args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
-    # if sum([args.lime, args.cam, args.eval, args.emb]) > 1:
-    #     raise ValueError('Choose only one of: lime/cam/eval/emb')
-
     print(f'Running: {__file__}\nIn dir: {os.getcwd()}')
     print('Args:', ' '.join(sys.argv))
     run_dir = args.run
@@ -180,8 +194,10 @@ if __name__ == '__main__':
         from lime import lime_image
         from skimage.segmentation import mark_boundaries
 
+
         def convert_for_lime(img):
             return (img.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+
 
         def predict_lime(images):
             """
@@ -205,6 +221,7 @@ if __name__ == '__main__':
             probs, _ = predict(model, img0)
             return probs
 
+
         def show_lime_image(explanation, img, lime_kwargs, title=None, show=False, output_path=None):
             """
             Show image with LIME explanation overlay
@@ -223,6 +240,7 @@ if __name__ == '__main__':
             if output_path:
                 plt.savefig(output_path)
             plt.close()
+
 
         nums_to_names = dataset_module.nums_to_unified
         explainer = lime_image.LimeImageExplainer(random_state=seed)
@@ -286,8 +304,11 @@ if __name__ == '__main__':
         metrics_test = keys_append(metrics_test, ' Test')
         cr = classification_report(outputs_test['label'], outputs_test['pred'])
         print(cr)
-        ''' Confusion matrix '''
-        get_confusion_matrix(outputs_test, output_dir)
+        ''' Confusion matrix + ROC curve '''
+        plot_confmats(outputs_test, output_dir, 'test')
+        eer_train, eer_th_train = roc_eer(outputs_train, output_dir, 'train')
+        eer_val, eer_th_val = roc_eer(outputs_val, output_dir, 'val')
+        eer_test, eer_th_test = roc_eer(outputs_test, output_dir, 'test')
 
     ''' CAM Explanations  '''
     if args.cam:
@@ -323,7 +344,6 @@ if __name__ == '__main__':
                     pred_class = preds_classes_b[i]
                     idx = batch['idx'][i].item()
                     label = batch['label'][i].item()
-
                     ''' Generate CAMs for all classes (targets) '''
                     cams = [cam_method(input_tensor=img[None, ...], targets=[t]) for t in targets]
                     cam_pred = cams[pred_class][0]  # deletion metric only works with CAM for the predicted class
@@ -331,7 +351,7 @@ if __name__ == '__main__':
                     cams = (255 * cams).astype(np.uint8)[:, 0]  # uint8 to save space
                     # resize CAM to original image size
                     cam_pred = cv2.resize(cam_pred, (img.shape[1], img.shape[2]))  # interpolation bilinear by default
-                    ''' Perturb explained region and predict again '''
+                    ''' Perturb explained region '''
                     masks = perturbation_masks(cam_pred, percentages)
                     baselines = perturbation_baselines(img_np, which=['black', ])  #
                     for base_name, baseline in baselines.items():
@@ -341,7 +361,7 @@ if __name__ == '__main__':
                         preds_both, _ = predict(model, torch.tensor(np.r_[imgs_deletion, imgs_insertion], device=device, dtype=torch.float32))
                         probs_deletion, probs_insertion = preds_both[:len_pct], preds_both[len_pct:][::-1]
                         # `probs_insertion` reversed to match decreasing order of percentages_kept    ^^^^
-                        ''' Save Deletion Scores '''
+                        ''' Save Perturbation Scores '''
                         cams_out.append({'cam': cams, 'idx': idx, 'path': batch['path'][i],  # strings are not tensors
                                          'method': method_name, 'percentages_kept': config.percentages_kept,
                                          'baseline': base_name, 'label': label, 'pred': preds_classes_b[i], 'pred_scores': pred,
@@ -374,6 +394,7 @@ if __name__ == '__main__':
         ''' Extract embeddings through forward hooks '''
         activation = {}
 
+
         def get_activation(name):
             """ Hook for extracting activations from a layer specified by name """
 
@@ -381,6 +402,7 @@ if __name__ == '__main__':
                 activation[name] = outputs.detach()  # refers to outer-scope `activation` dict
 
             return hook
+
 
         emb_layer = 'avgpool'  # resnet18
         # emb_layer = 'avgpool'  # efficientnet_v2_s

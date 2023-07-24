@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 
 # local
 from util_torch import init_device
-from util_face import get_ref_landmarks, get_align_transform, transform_bbox, rotate, mtcnn_predict_batched, \
+from face_detection import get_ref_landmarks, get_align_transform, transform_bbox, rotate, mtcnn_predict_batched, \
     find_rotation
 from util_image import plot_many
 

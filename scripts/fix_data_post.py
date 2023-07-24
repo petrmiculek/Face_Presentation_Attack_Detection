@@ -27,7 +27,7 @@ import cv2
 
 # local
 from util_torch import init_device
-from util_face import get_ref_landmarks, face_height, find_rotation, rotate
+from face_detection import get_ref_landmarks, face_height, find_rotation, rotate
 from util_image import plot_many
 
 parser = argparse.ArgumentParser()

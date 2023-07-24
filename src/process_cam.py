@@ -64,10 +64,10 @@ pil_logger.setLevel(logging.INFO)
 import config
 import dataset_base
 from dataset_base import show_labels_distribution, pick_dataset_version, load_annotations, label_names_binary, get_dataset_setup
+from explanations import overlay_cam, sobel_edges, perturbation_masks, perturbation_baselines
+from face_detection import get_ref_landmarks
 from util_image import get_marker, plot_many
-from util_expl import overlay_cam, sobel_edges, perturbation_masks, perturbation_baselines
 from util_torch import init_seed, get_dataset_module
-from util_face import get_ref_landmarks
 
 
 ''' Global variables '''
@@ -141,8 +141,7 @@ def read_cams(paths, path_prefix=None):
 
 # Calculations with CAMs
 def cam_mean(cams, select):
-    """
-    Average CAM by class.
+    """ Compute average CAM by class.
     :param cams: (n, c, h, w)
     :param select: (n) predicted or ground-truth classes
     :return: (c, h, w)
@@ -156,14 +155,7 @@ def cam_mean(cams, select):
     return cam
 
 
-def cam_mean_(df, key_select):
-    cams = df['cam'].values
-    select = df[key_select].values
-    cam = cam_mean(cams, select)
-    return cam
-
-
-def cams_confmat_(cams, labels, preds):
+def cam_mean_confmat(cams, labels, preds):
     cam = np.zeros((len(label_names), *cam_shape))  # (pred, label, h, w)
     with warnings.catch_warnings():
         warnings.filterwarnings(action='ignore')
@@ -811,7 +803,6 @@ if __name__ == '__main__':
                 print(f"sample idx={s['idx']} not found in df")
 
     ''' Average CAM by predicted category '''
-    cams_id = 'SampleID'
     if False:
         cams_pred = cam_mean(cams, preds)
         output_path = join(cam_dir, f'avg_class_pred.{ext}')
@@ -827,7 +818,7 @@ if __name__ == '__main__':
     ''' Average CAM per (predicted, ground-truth) category '''
     if False:
         # confusion matrix for CAMs
-
+        cams_confmat = cam_mean_confmat(cams, labels, preds)
         output_path = join(cam_dir, f'avg_confmat.{ext}')
         plot5x5(cams_confmat, 'Average CAM Confusion Matrix', output_path)
 
@@ -865,15 +856,9 @@ if __name__ == '__main__':
             plot_many(imgs, titles=titles, output_path=output_path)
 
     ''' Further possible comparisons '''
-    ''' Difference between predicted and ground truth category '''
-    # not now
-    ''' Difference between predicted and ground truth category, per class '''
-    # not now
-
-    # unused - copied from evaluate.py
+    ''' plot deletion scores per-baseline (old) '''
     if False:
         cams_df = df
-        # plot deletion scores per-baseline
         baselines = cams_df.baseline.unique()
         xs = cams_df.percentages_kept.iloc[0]
 

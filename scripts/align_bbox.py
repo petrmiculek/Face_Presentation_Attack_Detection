@@ -24,7 +24,7 @@ import pandas as pd
 # local
 from util_torch import init_device
 from util_image import plot_many
-from util_face import get_ref_landmarks, get_align_transform, transform_bbox
+from face_detection import get_ref_landmarks, get_align_transform, transform_bbox
 
 if __name__ == '__main__':
     # human-readable numpy float printing
