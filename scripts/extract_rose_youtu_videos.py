@@ -27,7 +27,6 @@ from PIL import Image
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
-import matplotlib.pyplot as plt
 
 # local
 from util_torch import init_device

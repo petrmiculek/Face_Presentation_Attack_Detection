@@ -20,7 +20,6 @@ sys.path.extend([cwd] + [join(cwd, d) for d in os.listdir() if os.path.isdir(d)]
 from facenet_pytorch import MTCNN
 from PIL import Image
 import numpy as np
-from matplotlib import pyplot as plt
 from tqdm import tqdm
 import pandas as pd
 import cv2
@@ -28,27 +27,10 @@ import cv2
 # local
 from util_torch import init_device
 from face_detection import get_ref_landmarks, face_height, find_rotation, rotate
-from util_image import plot_many
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-i', '--input_path', help='directory with images', type=str,
                     required=True)  # e.g. '/mnt/sdb1/dp/rose_youtu_vids'
-
-
-def plot_landmarks(img, landmarks=None, title=None):
-    """ Show image with the detected landmarks. """
-    plt.imshow(img)
-    if landmarks is not None:
-        if not isinstance(landmarks, list):
-            landmarks = [landmarks]
-        for l in landmarks:
-            if l is not None:
-                plt.scatter(l[:, 0], l[:, 1])
-    if title:
-        plt.title(title)
-    plt.tight_layout(pad=0)
-    plt.show()
-
 
 if __name__ == '__main__':
     ''' Parse arguments '''
@@ -62,7 +44,6 @@ if __name__ == '__main__':
     df = pd.read_pickle(join(dir_imgs, 'data.pkl'))
     os.makedirs(join(dir_imgs, 'fixed'))
     os.makedirs(join(dir_imgs, 'removed'))
-
     ''' Face Alignment parameters '''
     scale = 3.25
     margin = 384 - 112 * scale
@@ -72,11 +53,8 @@ if __name__ == '__main__':
     ''' MTCNN '''
     device = init_device()
     mtcnn = MTCNN(image_size=384, select_largest=True, device=device, post_process=False, min_face_size=150)
-
     ''' Intermediate lists '''
     to_remove = []  # keep indexes, paths and info about faulty images
-    # manuals = []
-    # keep = []
 
     ''' Loop through annotations '''
     try:
@@ -88,9 +66,6 @@ if __name__ == '__main__':
             landmarks_sample = None
             ''' Estimate blur '''
             blur_val = cv2.Laplacian(img, cv2.CV_64F).var()
-            # if blur_val < 20:
-            #     flagged = True
-            #     info += f' blur{blur_val:.0f}'
 
             ''' Check face orientation '''
             rot = find_rotation(mtcnn, img)
@@ -150,19 +125,6 @@ if __name__ == '__main__':
             # end of mega-nested ifs
             if flagged:
                 to_remove.append({'i': i, 'path': row['path'], 'info': info})
-                if False:
-                    # plt.imshow(img)
-                    # if landmarks_sample is not None:
-                    #     plt.scatter(landmarks_sample[:, 0], landmarks_sample[:, 1], c='g')
-                    # plt.scatter(ref_pts[:, 0], ref_pts[:, 1], c='r')
-                    # plt.title(info)
-                    # plt.tight_layout(pad=0)
-                    # plt.show()
-                    #
-                    # s = input()
-                    # if len(s) > 0:
-                    #     manuals.append({'i': i, 'path': row['path'], 'note': s})
-                    pass
     except:
         pass
 

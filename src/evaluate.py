@@ -312,7 +312,7 @@ if __name__ == '__main__':
 
     ''' CAM Explanations  '''
     if args.cam:
-        from pytorch_grad_cam import GradCAM
+        from pytorch_grad_cam import GradCAM, HiResCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, LayerCAM, RandomCAM
         from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
         import cv2
 
@@ -325,8 +325,10 @@ if __name__ == '__main__':
         #           ^ minor visual difference from ClassifierOutputTarget.
         percentages = config.percentages_kept  # %pixels kept when perturbing the images
         len_pct = len(percentages)
+        ''' Choose CAM methods and baselines used '''
         method_modules = [GradCAM]  # [GradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, RandomCAM, SobelFakeCAM, CircleFakeCAM]
-        # ScoreCAM OOM, FullGrad too different; AblationCAM runs too long
+        baselines_used = ['black']  # ['black', 'mean', 'blur', 'blur_div4', 'blur_div8']
+
         ''' Generate CAMs using all methods '''
         for i_m, method_module in enumerate(method_modules):
             cams_out = []
@@ -353,7 +355,7 @@ if __name__ == '__main__':
                     cam_pred = cv2.resize(cam_pred, (img.shape[1], img.shape[2]))  # interpolation bilinear by default
                     ''' Perturb explained region '''
                     masks = perturbation_masks(cam_pred, percentages)
-                    baselines = perturbation_baselines(img_np, which=['black', ])  #
+                    baselines = perturbation_baselines(img_np, which=baselines_used)
                     for base_name, baseline in baselines.items():
                         ''' Predict on perturbed images - deletion and insertion metrics '''
                         imgs_deletion = np.array([(img_np * mask + (1 - mask) * baseline) for mask in masks])

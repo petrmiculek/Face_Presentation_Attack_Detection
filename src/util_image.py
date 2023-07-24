@@ -1,5 +1,5 @@
 import numpy as np
-
+from PIL import Image
 
 def deprocess(img):
     """ Normalize image for visualization. """
@@ -21,6 +21,19 @@ def normalize(img):
     """ Rescale image values to [0, 1]. """
     return (img - np.min(img)) / (np.max(img) - np.min(img) + 1e-8)
 
+
+def mix_mask(img, mask, inside=1, outside=0.3):
+    """ Highlight masked area in the image, darken the rest. """
+    return img * outside + mask * img * (inside - outside)
+
+
+def plot_many_df(df, *args, **kwargs):
+    if 'path' not in df.columns:
+        raise ValueError('plot_many_df: DataFrame must contain a column named "path"')
+    if len(df) > 10:
+        raise ValueError('plot_many_df: too many images (max 10)')
+    imgs = [np.array(Image.open(path)) for path in df['path']]
+    plot_many(imgs, *args, **kwargs)
 
 def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, rows=None, **kwargs):
     """

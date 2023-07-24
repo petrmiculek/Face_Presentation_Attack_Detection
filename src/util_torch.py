@@ -79,7 +79,7 @@ def load_model(model_name, num_classes, freeze_backbone=False, pretrained=True):
     ''' Preprocessing and Augmentations '''
     crop_size = transforms_orig.crop_size[0]
     resize_size = transforms_orig.resize_size[0]
-    transform_train = ClassificationPresetTrain(auto_augment_policy='ta_wide', crop_size=crop_size)
+    transform_train = ClassificationPresetTrain(auto_augment_policy='ta_wide', random_erase_prob=0.5, crop_size=crop_size)
     transform_eval = ClassificationPresetEval(crop_size=crop_size, resize_size=resize_size)
     preprocess = {
         'crop_size': crop_size,
@@ -123,6 +123,10 @@ def load_model_eval(model_name, num_classes, run_dir, device='cuda:0'):
 
     print(f'Loaded model weights from: {run_dir}')
     print(f'Loading info: {loading_info}')
+    if 'IncompatibleKeys' in loading_info.__repr__():
+        print('^ if {fc,classifier}_{binary,multiclass,rose} keys missing, is is fine.\n'
+              'Weights were loaded OK. Don\'t switch the forward to binary/multiclass now.\n'
+              'Just use model as-is (binary or multiclass).')
 
     model.to(device)
     model.eval()

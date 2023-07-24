@@ -20,21 +20,8 @@ else
 fi
 
 # run training
-
-# default args:
-# -d rose_youtu
-# -m all_attacks
-
-$py src/train.py -a efficientnet_v2_s -l 0.0001 -b $batch_size -e $epochs -w $num_workers -s "$seed" -n
-
-# batch size:
-# glados, RTX 2080, 8GB -> 16; leaked 5GB during the work :/, glados cannot run singularity23.02
-# adan, 16GB
-# in speed benchmark for empty training loop, batch size 64 is used - not realistic for training
-
-# if false:
 if [ -z "wont-run" ]; then
-  exit 0
+  python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b $batch_size -e $epochs -w $num_workers -s "$seed" -n
   # meta
   python3 src/train.py -a efficientnet_v2_s -l 0.0001 -b 16 -e 3 -w 4 -s $RANDOM -m unseen_attack -k 1
   # local
