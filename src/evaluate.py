@@ -314,8 +314,9 @@ if __name__ == '__main__':
 
     ''' CAM Explanations  '''
     if args.cam:
-        from pytorch_grad_cam import GradCAM, HiResCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, LayerCAM, RandomCAM
+        from pytorch_grad_cam import GradCAM, EigenGradCAM, HiResCAM, GradCAMPlusPlus, XGradCAM, EigenCAM, RandomCAM
         from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
+        from explanations import CircleFakeCAM, SobelFakeCAM
         import cv2
 
         cam_dir = join(output_dir, config.cam_dir_name)
@@ -395,17 +396,13 @@ if __name__ == '__main__':
         """
         import cv2
         import seaborn as sns
-        sns.set_theme(style="whitegrid")
-        # pyplot grid off
-        plt.rcParams["axes.grid"] = False
 
-        cams_file = join(run_dir, 'cams_GradCAMaug_-1.pkl.gz')
+        # not parameterised because of last minute changes...
+        cams_file = join(run_dir, '<fill_in>...pkl.gz')
         df = pd.read_pickle(cams_file)
         df.path = df.path.apply(lambda x: os.path.basename(x))
         df['cam_pred'] = df.apply(lambda row: row.cam[row.pred], axis=1)
 
-        # if not hasattr(model, 'fw_with_emb'):
-        #     raise AttributeError('Model does not have fw_with_emb method')
         ''' Extract embeddings through forward hooks '''
         activation = {}
 
@@ -422,9 +419,9 @@ if __name__ == '__main__':
         embeddings_hook = model.avgpool.register_forward_hook(get_activation(emb_layer))
 
         ''' Embeddings Eval loop '''
-        probs, preds, labels, paths, features, avgpools = [], [], [], [], [], []
+        probs, preds, labels, paths, embeddings = [], [], [], [], []
         labels_orig = []
-        avgpools_deletion, avgpools_insertion = [], []
+        embeddings_deletion, embeddings_insertion = [], []
         baseline_name = 'black'
         baseline = perturbation_baselines(np.zeros((3, 384, 384)), which=[baseline_name])[baseline_name]
         percentages = config.percentages_kept
@@ -442,7 +439,7 @@ if __name__ == '__main__':
                 prediction_hard = torch.argmax(out, dim=1)
                 preds.append(prediction_hard.cpu().numpy())
                 probs.append(torch.nn.functional.softmax(out, dim=1).cpu().numpy())
-                avgpools.append(activation['avgpool'].cpu().numpy())
+                embeddings.append(activation[emb_layer].cpu().numpy())
                 df_batch = df[df.path.isin(batch_paths)]
 
                 ''' Embeddings of perturbed images '''
@@ -458,105 +455,105 @@ if __name__ == '__main__':
                     # predict on perturbed images
                     imgs_del_tensor = torch.tensor(imgs_deletion, device=device, dtype=torch.float32)
                     probs_deletion, _ = predict(model, imgs_del_tensor)
-                    avgpools_deletion.append(activation['avgpool'].cpu().numpy())
+                    embeddings_deletion.append(activation[emb_layer].cpu().numpy())
                     probs_insertion, _ = predict(model, torch.tensor(imgs_insertion, device=device, dtype=torch.float32))
-                    avgpools_insertion.append(activation['avgpool'].cpu().numpy())
+                    embeddings_insertion.append(activation[emb_layer].cpu().numpy())
 
         labels = np.concatenate(labels)
         preds = np.concatenate(preds)
         probs = np.concatenate(probs)
         paths = np.concatenate(paths)
-        avgpools_insertion = np.array(avgpools_insertion)[..., 0, 0]
-        avgpools_deletion = np.array(avgpools_deletion)[..., 0, 0]
-        emb_orig = np.concatenate(avgpools)[..., 0, 0]  # strip last 2 dimensions from (N, C, 1, 1)
-        # embeddings_hook.remove()  # todo re-add
+        embeddings_insertion = np.array(embeddings_insertion)[..., 0, 0]
+        embeddings_deletion = np.array(embeddings_deletion)[..., 0, 0]
+        emb_orig = np.concatenate(embeddings)[..., 0, 0]  # strip last 2 dimensions from (N, C, 1, 1)
+        embeddings_hook.remove()
         # save avgpools embeddings to file
         split = 'test'
         np.save(join(output_dir, f'embeddings_{split}.npy'), emb_orig)
         metrics = compute_metrics(labels, preds)
         df_out = pd.DataFrame({'path': list(paths), 'label': list(labels), 'pred': list(preds),
                                'prob': list(probs), 'emb': list(emb_orig),
-                               'emb_del': list(avgpools_deletion), 'emb_ins': list(avgpools_insertion)})
+                               'emb_del': list(embeddings_deletion), 'emb_ins': list(embeddings_insertion)})
+        df_out.to_pickle(join(output_dir, f'embeddings_{split}.pkl.gz'))
 
         ''' Project and plot embeddings (PCA, t-SNE) '''
+        sns.set_theme(style="whitegrid")
+        plt.rcParams["axes.grid"] = False  # pyplot grid off
+        # seaborn disable ticks
+        plt.rcParams['xtick.labelbottom'] = False
+        plt.rcParams['xtick.bottom'] = False
+        plt.rcParams['xtick.top'] = False
+        plt.rcParams['xtick.labeltop'] = False
+        plt.rcParams['ytick.labelleft'] = False
+        plt.rcParams['ytick.left'] = False
+        plt.rcParams['ytick.right'] = False
+        plt.rcParams['ytick.labelright'] = False
+
         normal_pca, normal_tsne = get_pca_tsne(emb_orig)
         labels_text = [label_names[l] for l in labels]
         preds_text = [label_names[p] for p in preds]
 
+        kwargs_plot_categorical = {'show': args.show, 'hue': 'label', 'palette': 'tab10', 'alpha': 0.7, 'style': 'label', 'linewidth': 0.00,
+                                   'edgecolor': 'gray'}
+        kwargs_plot = {'show': args.show, 'hue': '% kept', 'style': 'Prediction', 'alpha': 0.7, 'linewidth': 0.00, 'edgecolor': 'gray'}  #
         ''' Plot t-SNE '''
-        df_plot = pd.DataFrame({'x': normal_tsne[:, 0], 'y': normal_tsne[:, 1], 'label': labels_text})
-        kwargs = {'hue': 'label', 'palette': 'tab10', 'alpha': 1, 'style': 'label'}
+        df_tsne = pd.DataFrame({'x': normal_tsne[:, 0], 'y': normal_tsne[:, 1], 'label': labels_text})
         output_path = join(output_dir, f'embeddings_{split}_tsne.pdf')
-        plot_embeddings2d(df_plot, 't-SNE of embeddings', output_path=output_path, **kwargs)
+        plot_embeddings2d(df_tsne, 't-SNE of embeddings', output_path=output_path, **kwargs_plot_categorical)
 
         ''' Plot PCA '''
-        df_plot = pd.DataFrame({'x': normal_pca[:, 0], 'y': normal_pca[:, 1], 'label': labels_text})
-        kwargs = {'hue': 'label', 'palette': 'tab10', 'alpha': 1, 'style': 'label'}
+        df_pca = pd.DataFrame({'x': normal_pca[:, 0], 'y': normal_pca[:, 1], 'label': labels_text})
         output_path = join(output_dir, f'embeddings_{split}_pca.pdf')
-        plot_embeddings2d(df_plot, 'PCA of embeddings', output_path=output_path, **kwargs)
+        plot_embeddings2d(df_pca, 'PCA of embeddings', output_path=output_path, **kwargs_plot_categorical)
 
         ''' Perturbed images embeddings '''
         ''' Deletion metric '''
-        # drop 0% if needed.
-        drop_zero = False
-        drop_zero_plot = False
-        if drop_zero:
-            pct_used = percentages[:-1]
-            emb_del = avgpools_deletion[:, :-1]
-        else:
-            pct_used = percentages
-            emb_del = avgpools_deletion
-
-        del_transformed = np.concatenate(emb_del)  # (N, P, C) -> (N*P, C),  P is the perturbation percentage
-        del_percentages = np.tile(pct_used, emb_del.shape[0])  # repeated 100 to 0, 100 to 0 ... [A, B, C, A, B, C]
-        preds_text_rep = np.repeat(preds_text, len(pct_used))  # original prediction, repeated [A, A, A, B, B, B]
+        del_transformed = np.concatenate(embeddings_deletion)  # (N, P, C) -> (N*P, C),  P is the perturbation percentage
+        del_percentages = np.tile(percentages, embeddings_deletion.shape[0])  # repeated 100 to 0, 100 to 0 ... [A, B, C, A, B, C]
+        preds_text_rep = np.repeat(preds_text, len(percentages))  # original prediction, repeated [A, A, A, B, B, B]
         del_pca, del_tsne = get_pca_tsne(del_transformed)
-        df_del_tsne = pd.DataFrame({'x': del_tsne[:, 0], 'y': del_tsne[:, 1], '% kept': del_percentages, 'Prediction': preds_text_rep})
-        if drop_zero_plot:
-            df_del_tsne = df_del_tsne[df_del_tsne['% kept'] != 0]
         ''' Plot t-SNE '''
+        df_del_tsne = pd.DataFrame({'x': del_tsne[:, 0], 'y': del_tsne[:, 1], '% kept': del_percentages, 'Prediction': preds_text_rep})
         output_path = join(output_dir, f'embeddings_{split}_tsne_deletion.pdf')
-        plot_embeddings2d(df_del_tsne, 't-SNE of deletion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+        plot_embeddings2d(df_del_tsne, 't-SNE of deletion metric image embeddings', output_path=output_path, **kwargs_plot)
 
         ''' Plot PCA '''
         df_del_pca = pd.DataFrame({'x': del_pca[:, 0], 'y': del_pca[:, 1], '% kept': del_percentages, 'Prediction': preds_text_rep})
         output_path = join(output_dir, f'embeddings_{split}_pca_deletion.pdf')
-        plot_embeddings2d(df_del_pca, 'PCA of deletion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+        plot_embeddings2d(df_del_pca, 'PCA of deletion metric image embeddings', output_path=output_path, **kwargs_plot)
 
         ''' Insertion metric '''
-        emb_ins = avgpools_insertion  # [:, 1:]  # drop 0%
-        pct_used = percentages  # [:-1]
-        ins_transformed = np.concatenate(emb_ins)  # (N, P, C) -> (N*P, C),  P is the perturbation percentage
-        ins_percentages = np.tile(pct_used[::-1], emb_ins.shape[0])  # repeated 0 to 100, 0 to 100 ... [C, B, A, C, B, A]
-        preds_text_rep = np.repeat(preds_text, len(pct_used))  # original prediction, repeated [A, A, A, B, B, B]
+        ins_transformed = np.concatenate(embeddings_insertion)  # (N, P, C) -> (N*P, C),  P is the perturbation percentage
+        ins_percentages = np.tile(percentages[::-1], embeddings_insertion.shape[0])  # repeated 0 to 100, 0 to 100 ... [C, B, A, C, B, A]
+        preds_text_rep = np.repeat(preds_text, len(percentages))  # original prediction, repeated [A, A, A, B, B, B]
         ins_pca, ins_tsne = get_pca_tsne(ins_transformed)
         ''' Plot t-SNE '''
         df_ins_tsne = pd.DataFrame({'x': ins_tsne[:, 0], 'y': ins_tsne[:, 1], '% kept': ins_percentages, 'Prediction': preds_text_rep})
-        # df_ins_tsne = df_ins_tsne[df_ins_tsne['% kept'] != 0]
         output_path = join(output_dir, f'embeddings_{split}_tsne_insertion.pdf')
-        plot_embeddings2d(df_ins_tsne, 't-SNE of insertion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+        plot_embeddings2d(df_ins_tsne, 't-SNE of insertion metric image embeddings', output_path=output_path, **kwargs_plot)
 
         ''' Plot PCA '''
         df_ins_pca = pd.DataFrame({'x': ins_pca[:, 0], 'y': ins_pca[:, 1], '% kept': ins_percentages, 'Prediction': preds_text_rep})
-        # df_ins_pca = df_ins_pca[df_ins_pca['% kept'] != 0]
         output_path = join(output_dir, f'embeddings_{split}_pca_insertion.pdf')
-        plot_embeddings2d(df_ins_pca, 'PCA of insertion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+        plot_embeddings2d(df_ins_pca, 'PCA of insertion metric image embeddings', output_path=output_path, **kwargs_plot)
 
         if False:
+            """
+            Unused in the end.
+            
+            Note:
+            for a 7k dataset, cosine similarity takes 1.5s, euclidean distance 2.5s
+            for a 50k+ dataset, we might wait a bit
+            """
             # embeddings distance matrix
             from sklearn.metrics.pairwise import cosine_similarity
             from sklearn.metrics.pairwise import euclidean_distances
 
             # cosine similarity
-            cos_sim = cosine_similarity(features)
+            cos_sim = cosine_similarity(emb_orig)
             # euclidean distance
-            eucl_dist = euclidean_distances(features)
+            eucl_dist = euclidean_distances(emb_orig)
 
-            """
-            Note:
-            for a 7k dataset, cosine similarity takes 1.5s, euclidean distance 2.5s
-            for a 50k+ dataset, we might wait a bit
-            """
 
     t1 = time.perf_counter()
     print(f'Execution finished in {t1 - t0:.2f}s')  # since dataset loaded

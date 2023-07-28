@@ -225,11 +225,15 @@ def plot_embeddings2d(df_plot, title, output_path=None, show=False, **kwargs):
     kwargs_plot.update(kwargs)
     sns.scatterplot(data=df_plot, x='x', y='y', **kwargs_plot)
     # move legend outside the plot to the right
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    plt.legend(bbox_to_anchor=(1.02, 1), loc=2, borderaxespad=0.)
     plt.title(title)
     plt.tight_layout()
+    # manually add text for labels x and y, but do not use plt.xlabel() and plt.ylabel()
+    plt.text(0.5, -0.025, 'x', ha='center', va='center', transform=plt.gca().transAxes)
+    plt.text(-0.025, 0.5, 'y', ha='center', va='center', rotation='vertical', transform=plt.gca().transAxes)
+
     if output_path is not None:
-        plt.savefig(output_path, bbox_inches='tight', pad_inches=0.1)
+        plt.savefig(output_path, bbox_inches='tight', pad_inches=0.01)
     if show:
         plt.show()
     plt.close()
