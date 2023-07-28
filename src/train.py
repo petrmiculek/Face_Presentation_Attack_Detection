@@ -1,3 +1,19 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Train a model on a dataset.
+- main training loop
+- support any training mode, dataset, model
+- mixed precision, gradient accumulation
+- multi-task training
+- model checkpointing + early stopping
+- config saving
+- logging + W&B
+- evaluation
+"""
 # stdlib
 import argparse
 import datetime

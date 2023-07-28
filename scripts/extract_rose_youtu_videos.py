@@ -1,12 +1,16 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
 """
 Extracting faces from RoseYoutu dataset videos.
 
-MTCNN Face Detection
-Affine transformation for landmark alignment
-Image Quality check (Laplacian variance)
-Re-predict MTCNN on cropped
+- MTCNN Face Detection
+- Affine transformation for landmark alignment
+- Image Quality check (Laplacian variance)
+- Re-predict MTCNN on cropped
 
-Batched MTCNN Predictions for speedup
+- Batched MTCNN Predictions for speedup
 """
 
 # stdlib

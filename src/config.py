@@ -1,3 +1,14 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Configuration file for the project.
+
+constants, paths, and hyperparameters
+to be accessed from anywhere.
+"""
 training_run_id = None  # initialized from train.py
 
 # default training hyperparameters
@@ -39,3 +50,5 @@ from os.path import join
 dataset_lists_dir = 'dataset_lists'  # directory for dataset lists (annotations and paths)
 path_datasets_metadata = join(dataset_lists_dir, 'datasets.pkl')  # list of datasets
 runs_dir = 'runs'  # directory for saving models, logs, etc.
+cam_dir_name = 'cam'
+lime_dir_name = 'lime'

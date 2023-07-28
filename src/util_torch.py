@@ -1,3 +1,16 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+PyTorch utility functions
+- model loading
+- PyTorch setup
+- dataset selection (avoiding circular dependencies in dataset modules)
+- in-place operations disabling
+- early stopping (adapted, source listed below)
+"""
 # stdlib
 import os
 from os.path import join

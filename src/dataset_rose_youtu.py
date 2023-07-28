@@ -2,10 +2,15 @@
 __author__ = 'Petr Mičulek'
 __project__ = 'Master Thesis - Explainable Face anti-spoofing'
 __date__ = '31/07/2023'
-# TODO Describe this file
 """
-Dataset Rose-Youtu
+Dataset RoseYoutu
+==================
+Loading the RoseYoutu dataset.
+Original and adapted label lists.
+Decoding metadata from filenames.
 
+Worked with the preprocessed variant of the dataset.
+Later adapted for the full dataset. 
 """
 
 # stdlib

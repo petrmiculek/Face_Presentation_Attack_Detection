@@ -1,3 +1,16 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Run evaluation of a model.
+- Evaluate on training/validation/test set
+- Generate LIME explanations
+- Generate CAM explanations
+- Generate embeddings
+
+"""
 # stdlib
 import argparse
 import logging
@@ -32,7 +45,7 @@ pil_logger = logging.getLogger('PIL')
 pil_logger.setLevel(logging.INFO)
 
 # local
-from metrics import compute_eer, compute_metrics, plot_confusion_matrix, plot_roc_curve
+from metrics import compute_eer, compute_metrics, plot_confusion_matrix, plot_roc_curve, get_pca_tsne, plot_embeddings2d
 from util import print_dict, save_i, keys_append
 from util_torch import init_device, init_seed, load_model_eval, get_dataset_module, predict, eval_loop
 from explanations import perturbation_baselines, perturbation_masks
@@ -194,10 +207,8 @@ if __name__ == '__main__':
         from lime import lime_image
         from skimage.segmentation import mark_boundaries
 
-
         def convert_for_lime(img):
             return (img.cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
-
 
         def predict_lime(images):
             """
@@ -221,13 +232,8 @@ if __name__ == '__main__':
             probs, _ = predict(model, img0)
             return probs
 
-
         def show_lime_image(explanation, img, lime_kwargs, title=None, show=False, output_path=None):
-            """
-            Show image with LIME explanation overlay
-
-            todo parameterize label index [opt]
-            """
+            """ Show image with LIME explanation overlay. """
             temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], **lime_kwargs)
             half_overlay = temp // 2 + img // 2
             img_lime_out = mark_boundaries(half_overlay / 255.0, mask)
@@ -241,14 +247,10 @@ if __name__ == '__main__':
                 plt.savefig(output_path)
             plt.close()
 
-
         nums_to_names = dataset_module.nums_to_unified
         explainer = lime_image.LimeImageExplainer(random_state=seed)
-        labels = []
-        paths = []
-        preds = []
-        idxs = []
-        lime_dir = join(output_dir, 'lime')
+        labels, paths, preds, idxs = [], [], [], []
+        lime_dir = join(output_dir, config.lime_dir_name)
         os.makedirs(lime_dir, exist_ok=True)
 
         with torch.no_grad():
@@ -287,7 +289,7 @@ if __name__ == '__main__':
         labels = torch.cat(labels).numpy()
         idxs = torch.cat(idxs).numpy()
         paths = np.concatenate(paths)
-        preds = np.array(preds)  # todo maybe concatenate instead?
+        preds = np.array(preds)  # possible to concatenate instead
         idxs = np.array(idxs)
 
         np.savez(join(lime_dir, 'lime.npz'), labels=labels, paths=paths, preds=preds, idxs=idxs)  # todo pandas
@@ -316,7 +318,7 @@ if __name__ == '__main__':
         from pytorch_grad_cam.utils.model_targets import ClassifierOutputSoftmaxTarget
         import cv2
 
-        cam_dir = join(output_dir, 'cam')
+        cam_dir = join(output_dir, config.cam_dir_name)
         os.makedirs(cam_dir, exist_ok=True)
         ''' Setup: model, target layers and classes, methods '''
         target_layers = [model.features[-1][0]] if model_name == 'efficientnet_v2_s' else [model.layer4[-1].bn2]
@@ -360,8 +362,8 @@ if __name__ == '__main__':
                         ''' Predict on perturbed images - deletion and insertion metrics '''
                         imgs_deletion = np.array([(img_np * mask + (1 - mask) * baseline) for mask in masks])
                         imgs_insertion = np.array([(img_np * (1 - mask) + mask * baseline) for mask in masks])
-                        preds_both, _ = predict(model, torch.tensor(np.r_[imgs_deletion, imgs_insertion], device=device, dtype=torch.float32))
-                        probs_deletion, probs_insertion = preds_both[:len_pct], preds_both[len_pct:][::-1]
+                        probs_both, _ = predict(model, torch.tensor(np.r_[imgs_deletion, imgs_insertion], device=device, dtype=torch.float32))
+                        probs_deletion, probs_insertion = probs_both[:len_pct], probs_both[len_pct:][::-1]
                         # `probs_insertion` reversed to match decreasing order of percentages_kept    ^^^^
                         ''' Save Perturbation Scores '''
                         cams_out.append({'cam': cams, 'idx': idx, 'path': batch['path'][i],  # strings are not tensors
@@ -391,11 +393,21 @@ if __name__ == '__main__':
         Both ways currently work: either extracting it as a hook or through a special forward method
         
         """
+        import cv2
+        import seaborn as sns
+        sns.set_theme(style="whitegrid")
+        # pyplot grid off
+        plt.rcParams["axes.grid"] = False
+
+        cams_file = join(run_dir, 'cams_GradCAMaug_-1.pkl.gz')
+        df = pd.read_pickle(cams_file)
+        df.path = df.path.apply(lambda x: os.path.basename(x))
+        df['cam_pred'] = df.apply(lambda row: row.cam[row.pred], axis=1)
+
         # if not hasattr(model, 'fw_with_emb'):
         #     raise AttributeError('Model does not have fw_with_emb method')
         ''' Extract embeddings through forward hooks '''
         activation = {}
-
 
         def get_activation(name):
             """ Hook for extracting activations from a layer specified by name """
@@ -405,59 +417,146 @@ if __name__ == '__main__':
 
             return hook
 
-
         emb_layer = 'avgpool'  # resnet18
         # emb_layer = 'avgpool'  # efficientnet_v2_s
         embeddings_hook = model.avgpool.register_forward_hook(get_activation(emb_layer))
 
         ''' Embeddings Eval loop '''
-        len_loader = len(test_loader)
-        ep_loss = 0.0
-        preds, labels, paths, features, avgpools = [], [], [], [], []
-        # todo: to eval_loop - add fw_hook, save avgpools [clean]
+        probs, preds, labels, paths, features, avgpools = [], [], [], [], [], []
+        labels_orig = []
+        avgpools_deletion, avgpools_insertion = [], []
+        baseline_name = 'black'
+        baseline = perturbation_baselines(np.zeros((3, 384, 384)), which=[baseline_name])[baseline_name]
+        percentages = config.percentages_kept
         with torch.no_grad():
-            for sample in tqdm(test_loader, mininterval=1., desc='Embeddings'):
-                img, label = sample['image'], sample['label']
+            for batch in tqdm(test_loader, mininterval=1., desc='Embeddings'):
+                img, label = batch['image'], batch['label']
                 labels.append(label)  # check if label gets mutated by .to() ...
-                paths.append(sample['path'])
+                labels_orig.append(batch['label_orig'])  # check if label gets mutated by .to() ...
+                paths.append(batch['path'])
+                # join batch paths with dataframe paths
+                batch_paths = [os.path.basename(p) for p in batch['path']]
                 img, label = img.to(device, non_blocking=True), label.to(device, non_blocking=True)
-                # out, feature = model.fw_with_emb(img)
+                ''' Embeddings of original image '''
                 out = model(img)
-                loss = criterion(out, label)
-                ep_loss += loss.item()
                 prediction_hard = torch.argmax(out, dim=1)
                 preds.append(prediction_hard.cpu().numpy())
+                probs.append(torch.nn.functional.softmax(out, dim=1).cpu().numpy())
                 avgpools.append(activation['avgpool'].cpu().numpy())
-                # features.append(feature.cpu().numpy())
+                df_batch = df[df.path.isin(batch_paths)]
+
+                ''' Embeddings of perturbed images '''
+                for _, r in df_batch.iterrows():
+                    i = batch_paths.index(r.path)
+                    img_np = img[i].cpu().numpy()
+                    cam_pred = cv2.resize(r.cam_pred, (img.shape[2], img.shape[3]))  # interpolation bilinear by default
+                    # create perturbation masks
+                    masks = perturbation_masks(cam_pred, percentages)
+                    # create perturbed images
+                    imgs_deletion = np.array([(img_np * mask + (1 - mask) * baseline) for mask in masks])
+                    imgs_insertion = np.array([(img_np * (1 - mask) + mask * baseline) for mask in masks])
+                    # predict on perturbed images
+                    imgs_del_tensor = torch.tensor(imgs_deletion, device=device, dtype=torch.float32)
+                    probs_deletion, _ = predict(model, imgs_del_tensor)
+                    avgpools_deletion.append(activation['avgpool'].cpu().numpy())
+                    probs_insertion, _ = predict(model, torch.tensor(imgs_insertion, device=device, dtype=torch.float32))
+                    avgpools_insertion.append(activation['avgpool'].cpu().numpy())
 
         labels = np.concatenate(labels)
         preds = np.concatenate(preds)
+        probs = np.concatenate(probs)
         paths = np.concatenate(paths)
-        avgpools = np.concatenate(avgpools)[..., 0, 0]  # strip last 2 dimensions (N, C, 1, 1)
-        # features = np.concatenate(features)
-        embeddings_hook.remove()
+        avgpools_insertion = np.array(avgpools_insertion)[..., 0, 0]
+        avgpools_deletion = np.array(avgpools_deletion)[..., 0, 0]
+        emb_orig = np.concatenate(avgpools)[..., 0, 0]  # strip last 2 dimensions from (N, C, 1, 1)
+        # embeddings_hook.remove()  # todo re-add
         # save avgpools embeddings to file
         split = 'test'
-        np.save(join(output_dir, f'embeddings_{split}.npy'), avgpools)
-        # loss is averaged over batch already, divide by number of batches
-        ep_loss /= len_loader
+        np.save(join(output_dir, f'embeddings_{split}.npy'), emb_orig)
         metrics = compute_metrics(labels, preds)
-        features = avgpools  # using the forward hooks, not fw_with_emb
+        df_out = pd.DataFrame({'path': list(paths), 'label': list(labels), 'pred': list(preds),
+                               'prob': list(probs), 'emb': list(emb_orig),
+                               'emb_del': list(avgpools_deletion), 'emb_ins': list(avgpools_insertion)})
 
-        # embeddings distance matrix
-        from sklearn.metrics.pairwise import cosine_similarity
-        from sklearn.metrics.pairwise import euclidean_distances
+        ''' Project and plot embeddings (PCA, t-SNE) '''
+        normal_pca, normal_tsne = get_pca_tsne(emb_orig)
+        labels_text = [label_names[l] for l in labels]
+        preds_text = [label_names[p] for p in preds]
 
-        # cosine similarity
-        cos_sim = cosine_similarity(features)
-        # euclidean distance
-        eucl_dist = euclidean_distances(features)
+        ''' Plot t-SNE '''
+        df_plot = pd.DataFrame({'x': normal_tsne[:, 0], 'y': normal_tsne[:, 1], 'label': labels_text})
+        kwargs = {'hue': 'label', 'palette': 'tab10', 'alpha': 1, 'style': 'label'}
+        output_path = join(output_dir, f'embeddings_{split}_tsne.pdf')
+        plot_embeddings2d(df_plot, 't-SNE of embeddings', output_path=output_path, **kwargs)
 
-        """
-        Note:
-        for a 7k dataset, cosine similarity takes 1.5s, euclidean distance 2.5s
-        for a 50k+ dataset, we might wait a bit
-        """
+        ''' Plot PCA '''
+        df_plot = pd.DataFrame({'x': normal_pca[:, 0], 'y': normal_pca[:, 1], 'label': labels_text})
+        kwargs = {'hue': 'label', 'palette': 'tab10', 'alpha': 1, 'style': 'label'}
+        output_path = join(output_dir, f'embeddings_{split}_pca.pdf')
+        plot_embeddings2d(df_plot, 'PCA of embeddings', output_path=output_path, **kwargs)
+
+        ''' Perturbed images embeddings '''
+        ''' Deletion metric '''
+        # drop 0% if needed.
+        drop_zero = False
+        drop_zero_plot = False
+        if drop_zero:
+            pct_used = percentages[:-1]
+            emb_del = avgpools_deletion[:, :-1]
+        else:
+            pct_used = percentages
+            emb_del = avgpools_deletion
+
+        del_transformed = np.concatenate(emb_del)  # (N, P, C) -> (N*P, C),  P is the perturbation percentage
+        del_percentages = np.tile(pct_used, emb_del.shape[0])  # repeated 100 to 0, 100 to 0 ... [A, B, C, A, B, C]
+        preds_text_rep = np.repeat(preds_text, len(pct_used))  # original prediction, repeated [A, A, A, B, B, B]
+        del_pca, del_tsne = get_pca_tsne(del_transformed)
+        df_del_tsne = pd.DataFrame({'x': del_tsne[:, 0], 'y': del_tsne[:, 1], '% kept': del_percentages, 'Prediction': preds_text_rep})
+        if drop_zero_plot:
+            df_del_tsne = df_del_tsne[df_del_tsne['% kept'] != 0]
+        ''' Plot t-SNE '''
+        output_path = join(output_dir, f'embeddings_{split}_tsne_deletion.pdf')
+        plot_embeddings2d(df_del_tsne, 't-SNE of deletion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+
+        ''' Plot PCA '''
+        df_del_pca = pd.DataFrame({'x': del_pca[:, 0], 'y': del_pca[:, 1], '% kept': del_percentages, 'Prediction': preds_text_rep})
+        output_path = join(output_dir, f'embeddings_{split}_pca_deletion.pdf')
+        plot_embeddings2d(df_del_pca, 'PCA of deletion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+
+        ''' Insertion metric '''
+        emb_ins = avgpools_insertion  # [:, 1:]  # drop 0%
+        pct_used = percentages  # [:-1]
+        ins_transformed = np.concatenate(emb_ins)  # (N, P, C) -> (N*P, C),  P is the perturbation percentage
+        ins_percentages = np.tile(pct_used[::-1], emb_ins.shape[0])  # repeated 0 to 100, 0 to 100 ... [C, B, A, C, B, A]
+        preds_text_rep = np.repeat(preds_text, len(pct_used))  # original prediction, repeated [A, A, A, B, B, B]
+        ins_pca, ins_tsne = get_pca_tsne(ins_transformed)
+        ''' Plot t-SNE '''
+        df_ins_tsne = pd.DataFrame({'x': ins_tsne[:, 0], 'y': ins_tsne[:, 1], '% kept': ins_percentages, 'Prediction': preds_text_rep})
+        # df_ins_tsne = df_ins_tsne[df_ins_tsne['% kept'] != 0]
+        output_path = join(output_dir, f'embeddings_{split}_tsne_insertion.pdf')
+        plot_embeddings2d(df_ins_tsne, 't-SNE of insertion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+
+        ''' Plot PCA '''
+        df_ins_pca = pd.DataFrame({'x': ins_pca[:, 0], 'y': ins_pca[:, 1], '% kept': ins_percentages, 'Prediction': preds_text_rep})
+        # df_ins_pca = df_ins_pca[df_ins_pca['% kept'] != 0]
+        output_path = join(output_dir, f'embeddings_{split}_pca_insertion.pdf')
+        plot_embeddings2d(df_ins_pca, 'PCA of insertion metric image embeddings', hue='% kept', style='Prediction', output_path=output_path)
+
+        if False:
+            # embeddings distance matrix
+            from sklearn.metrics.pairwise import cosine_similarity
+            from sklearn.metrics.pairwise import euclidean_distances
+
+            # cosine similarity
+            cos_sim = cosine_similarity(features)
+            # euclidean distance
+            eucl_dist = euclidean_distances(features)
+
+            """
+            Note:
+            for a 7k dataset, cosine similarity takes 1.5s, euclidean distance 2.5s
+            for a 50k+ dataset, we might wait a bit
+            """
 
     t1 = time.perf_counter()
     print(f'Execution finished in {t1 - t0:.2f}s')  # since dataset loaded

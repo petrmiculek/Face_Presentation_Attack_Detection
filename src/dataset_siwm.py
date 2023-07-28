@@ -1,3 +1,19 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Dataset SIW-M
+- Load annotations
+- Drop samples with missing bounding boxes
+- Crop faces from images
+- Save cropped faces to a new folder
+- Plot sample images
+- Plot bounding boxes
+- Plot 2D histogram of bounding box sizes
+
+"""
 # stdlib
 import logging
 import os
@@ -22,7 +38,7 @@ from dataset_base import BaseDataset, StandardLoader
 name = 'siwm'
 
 ''' Hardcoded dataset paths '''
-data_root_dir = '/mnt/sdb1/dp/siw_m_dataset'  # todo change hardcoded path for dataset siwm
+data_root_dir = '/mnt/sdb1/dp/siw_m_dataset'
 samples_dir = join(data_root_dir, 'images')
 annotations_path = join(data_root_dir, 'table', 'table.csv')
 
@@ -64,7 +80,7 @@ spoof_info_to_attack = {
     'Makeup_Co': 0,
     'Makeup_Im': 0,
     'Makeup_Ob': 0,
-    'Partial_Paperglass': 0,  # todo what is this category
+    'Partial_Paperglass': 0,
     'Live': 1,
     'Paper': 2,
     'Partial_Funnyeye': 3,
@@ -92,14 +108,10 @@ spoof_attack : spoof_info
 
 
 def read_annotations(f):
-    # TODO parameter `f` unused
     annotations = pd.read_csv(annotations_path)
-
     """
     There are 6 spoof_attack and 15 spoof_info classes.
-    
     """
-
     use_spoof_attack = True  # else use spoof_info
     label_key = 'spoof_attack' if use_spoof_attack else 'spoof_info'
 

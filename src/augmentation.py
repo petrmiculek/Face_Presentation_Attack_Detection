@@ -1,4 +1,12 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
 """
+Create augmentation presets.
+
+All code adapted from torchvision. 
+Own changes mostly thrown away during development.
 Source: https://raw.githubusercontent.com/pytorch/vision/main/references/classification/presets.py
 """
 import torch

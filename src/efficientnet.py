@@ -1,3 +1,14 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Create EfficientNet model
+- adapted from torchvision implementation: https://github.com/pytorch/vision/blob/main/torchvision/models/efficientnet.py
+- added custom classifier heads
+- added switchable forward pass
+"""
 from functools import partial
 from typing import Sequence, Union, Optional, Any
 
@@ -11,7 +22,6 @@ from torchvision.models.efficientnet import MBConvConfig, FusedMBConvConfig, _ef
 
 
 class EfficientNet(EfficientNetBase):
-    # adapted from torchvision implementation, to subclass and add forward_train
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         dropout = 0.2  # as per original model code

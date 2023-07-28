@@ -1,3 +1,15 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Face detection and alignment.
+- MTCNN
+- Landmarks alignment
+- Rotation detection/fix
+- Utils
+"""
 import numpy as np
 import cv2
 

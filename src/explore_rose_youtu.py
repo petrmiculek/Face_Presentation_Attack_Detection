@@ -1,3 +1,14 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Exploration of the Rose-Youtu dataset.
+- plot category counts per ID
+- plot category counts for all IDs
+- plot example images
+"""
 # stdlib
 import os
 from os.path import join

@@ -1,3 +1,23 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+"""
+Dataset Splitting
+=================
+Create a dataset split (train, val, test) 
+for a training mode (all_attacks, one_attack, unseen_attack).
+
+Notes:
+    RoseYoutu contains 20 people - split into 9/1/10 for train/val/test.
+    Every person has the same number of samples, but not the same number of attack types
+
+Tested on:
+                |  rose_youtu  |    siwm    |   rose_youtu_full
+all_attacks     |    OK        |    .       |       OK
+unseen_attack   |    OK        |    .       |       OK
+one_attack      |    OK        |    .       |       OK
+"""
 # stdlib
 import argparse
 import logging
@@ -38,18 +58,6 @@ parser.add_argument('-s', '--seed', help='random seed', type=int,
                     default=None)  # shuffling, random attacks (both unused)
 parser.add_argument('-n', '--no_log', help='no logging = dry run', action='store_true')
 parser.add_argument('-c', '--comment', type=str, default='')
-
-''' Create a dataset split (train, val, test) for a training mode (all_attacks, one_attack, unseen_attack) '''
-'''
-RoseYoutu contains 20 people - split into 9/1/10 for train/val/test.
-Every person has the same number of samples, but not the same number of attack types
-
-Tested on:
-                |  rose_youtu  |    siwm    |   rose_youtu_full
-all_attacks     |    OK        |    .       |       OK
-unseen_attack   |    OK        |    .       |       OK
-one_attack      |    OK        |    .       |       OK
-'''
 
 # def main():
 if __name__ == '__main__':
@@ -121,7 +129,7 @@ if __name__ == '__main__':
     test_ids = np.array([13, 14, 15, 16, 17, 18, 20, 21, 22, 23])
 
     ''' Attacks to split by '''
-    bona_fide = dataset.bona_fide  # todo check siwm, not 0 there [warn]
+    bona_fide = dataset.bona_fide
     label_nums = dataset.label_nums_unified
     attack_nums = dataset.attack_nums_unified
 

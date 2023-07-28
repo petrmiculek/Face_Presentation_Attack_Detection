@@ -1,3 +1,13 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Utilities for images and plots
+- normalize images
+- general plotting functions
+"""
 import numpy as np
 from PIL import Image
 
@@ -68,7 +78,7 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, rows=
     if total < rows * cols:
         imgs.extend([np.ones((2, 2, 3))] * (rows * cols - total))
 
-    fig, ax = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows))
+    fig, ax = plt.subplots(rows, cols, figsize=(2.5 * cols, 3 * rows))
     fig.suptitle(title)
     for i, img in enumerate(imgs):
         # select current axis
@@ -93,6 +103,10 @@ def plot_many(*imgs, title=None, titles=None, output_path=None, show=True, rows=
         ax_i.axis('off')
         if titles is not None and i < len(titles):
             ax_i.set_title(titles[i])
+
+    if rows == 2:
+        # make more vertical space in between
+        plt.subplots_adjust(hspace=0.3)
 
     plt.tight_layout(pad=0.8)
     if output_path is not None:

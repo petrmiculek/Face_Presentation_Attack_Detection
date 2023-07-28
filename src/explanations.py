@@ -1,3 +1,14 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Explanation methods.
+- CAM
+- perturbation metrics
+- fake CAMs (Sobel, circle)
+"""
 # stdlib
 # -
 

@@ -1,9 +1,13 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
 """
 Exploring generated face crops, detecting faulty ones.
-Re-running of MTCNN face detection
-Image orientation check
-Laplacian variance check
-Landmark distance check
+- Re-running of MTCNN face detection
+- Image orientation check
+- Laplacian variance check
+- Landmark distance check
 """
 # stdlib
 import argparse

@@ -1,3 +1,14 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+"""
+Base Dataset Module
+===================
+General dataset class and loader.
+Dataset selection and loading functions.
+Utility dataset functions.
+"""
 # stdlib
 from os.path import join, exists, basename
 
@@ -230,7 +241,6 @@ def load_dataset(metadata_row, dataset_module, path_prefix=None, limit=-1, quiet
 
     :note: dataset_module used so that we don't import individual datasets here -> cycle
     """
-    # name = metadata_row['dataset_name']  # todo could reimport dataset module here [clean]
     seed = loader_kwargs.pop('seed', None)
     if 'transform' in loader_kwargs:
         transform_train = transform_eval = loader_kwargs.pop('transform')
@@ -247,7 +257,6 @@ def load_dataset(metadata_row, dataset_module, path_prefix=None, limit=-1, quiet
         print('Dataset labels per split:')  # including labels not present
         # it = zip(['train', 'val', 'test'], [paths_train, paths_val, paths_test])
         for split, split_paths in paths.items():
-            # TODO call show_labels_distribution [clean]
             class_occurences = []
             value_counts = split_paths['label'].value_counts().sort_index()
             for i in range(num_classes):

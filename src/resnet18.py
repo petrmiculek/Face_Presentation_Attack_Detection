@@ -1,3 +1,7 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
 """
 Resnet implementation taken from torchvision
 Source: https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py

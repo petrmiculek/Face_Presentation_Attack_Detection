@@ -1,3 +1,17 @@
+#! /usr/bin/env python3
+__author__ = 'Petr Mičulek'
+__project__ = 'Master Thesis - Explainable Face anti-spoofing'
+__date__ = '31/07/2023'
+
+"""
+Metrics and Visualization.
+- compute metrics
+- plot confusion matrix
+- plot ROC curve
+- compute EER
+- compute PCA and t-SNE
+- plot embeddings
+"""
 # stdlib
 from os.path import join
 
@@ -6,9 +20,12 @@ import numpy as np
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 from sklearn.metrics import confusion_matrix as conf_mat, classification_report, roc_curve, RocCurveDisplay, auc
 import seaborn as sns
+from sklearn.preprocessing import StandardScaler
 
 
 # local
@@ -188,3 +205,31 @@ def plot_roc_curve(gts, probs, show=True, output_path=None):
             plt.savefig(output_path, bbox_inches='tight')
     except Exception as e:
         print('Failed plotting/saving ROC curve\n', e)
+
+
+def get_pca_tsne(embeddings):
+    """ Get PCA and t-SNE of embeddings. """
+    scaler = StandardScaler()
+    transformed_embeddings = scaler.fit_transform(embeddings)
+    pca = PCA(n_components=50)
+    pca_result = pca.fit_transform(transformed_embeddings)
+    tsne = TSNE(n_components=2, perplexity=30, n_iter=1000, verbose=1)
+    tsne_result = tsne.fit_transform(transformed_embeddings)
+    return pca_result, tsne_result
+
+
+def plot_embeddings2d(df_plot, title, output_path=None, show=False, **kwargs):
+    """ Plot embeddings. """
+    p = sns.color_palette("viridis", as_cmap=True)
+    kwargs_plot = {'palette': p, 'alpha': 0.8, 'legend': 'full'}
+    kwargs_plot.update(kwargs)
+    sns.scatterplot(data=df_plot, x='x', y='y', **kwargs_plot)
+    # move legend outside the plot to the right
+    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    plt.title(title)
+    plt.tight_layout()
+    if output_path is not None:
+        plt.savefig(output_path, bbox_inches='tight', pad_inches=0.1)
+    if show:
+        plt.show()
+    plt.close()
